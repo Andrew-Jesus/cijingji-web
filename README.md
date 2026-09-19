@@ -2,9 +2,71 @@
 
 按需定制的背单词工具：只给你这一单元的词，用适合你的方法，按科学间隔安排复习。
 
-> **当前进度：阶段 0 · B2（引导三页）已交付，并完成首页排版重做、图标改造（银质立体）、
-> 悬浮球「小词」第一梯队（2026-09-19）**
-> 方案与验收标准见工作区根目录的 `词径记-阶段0-实施方案-v1.md`。
+> **当前进度：阶段 0 · B3（学习页 + 真 AI + 记账）已交付 —— 阶段 0 三批全部完成，
+> 待 Vercel 部署 + 真机复验后收口（2026-09-19）**
+> 方案与验收标准见工作区根目录的 `词径记-阶段0-实施方案-v1.md`；
+> B3 的实测证据、7 个检查点逐条结论、以及**发现但还没改的 3 个问题**见
+> 工作区根目录的 `词径记-阶段0-B3验收报告-v1.md`；
+> 部署步骤见 `词径记-Vercel部署指引-v1.md`。
+
+## 这一批（B3）交付了什么
+
+核心是一句话：**例句真的是按他的兴趣写的，而且这句话是一整条真实的 AI 链路产出的。**
+
+| 路由 | 做什么 |
+|---|---|
+| `/study/[sessionId]` | 学习页。两种卡片模板（`recognize` 看英选中 / `recall_spell` 中译英）+ 三级反馈 + 兴趣域例句 + 页内终态 |
+
+B3 新增的关键设计（都不是随手写的，每条都有代价在后面）：
+
+| 设计 | 一句话 |
+|---|---|
+| **`lib/plan/todayPlan.ts`** | 装配口径的**唯一实现**（`validateScope → resolveScope → mergeProfile → chooseMode → dailyCapFor → buildDailyPlan` 六步收成一个纯函数）。首页 / 结果页 / 学习页共用它 —— 这是"结果页说 36 个、首页显示 20 个"那类 bug 的根治 |
+| **`lib/ai/config.ts`** | **全项目唯一允许出现模型名的地方**。缺 Key 的一档**直接跳过而不抛错**，所以本机没配 Key 也能跑通全流程 |
+| **缓存分层提示词** | 不变的部分（角色 + JSON schema + 固定约束）放 system 且**逐字稳定**，变化的部分（兴趣域 + 单词）放 user。命中缓存后输入价是未命中的 **1/30** |
+| **Ground truth 注入** | 词头 / 音标 / 词性 / 义项由**服务端从种子数据查**，请求体只传 `wordId`。模型碰不到"事实"，只能编"句子" |
+| **三级降级链** | DeepSeek → GLM（免费兜底）→ **模板句**。模板句是确定性代码，所以**永远不会失败** |
+| **答完才取例句** | 不在卡片出现时预取。预取等于"用户还没答就先花一次钱"，而且翻页跳过就白花了 |
+| **`cached_tokens` 单独记账** | `input_tokens` / `output_tokens` / `cached_tokens` 分开记；另有 `priced` 区分"0 元"与"**没价**"（后者绝不能静默当成免费）、`peak` 标记高峰时段（DeepSeek 高峰 = 空闲 × 2） |
+
+**质量闸门（2026-09-19 复验，全部通过）**
+
+| 检查 | 结果 |
+|---|---|
+| `npm run test` | ✅ **25 个测试文件 / 396 个用例全绿**（B2 时是 12 / 175） |
+| `npm run typecheck` | ✅ 零错误 |
+| `npx eslint --max-warnings=0 .` | ✅ 零错误零警告 |
+| `npm run build` | ✅ 通过（`/api/ai` 为动态路由 → Key 在**请求时**读，不会被打进静态产物） |
+| `npm run start` + curl | ✅ 生产模式下首页 200、`/api/ai` 返回按兴趣生成的例句 |
+| 真实浏览器全流程（Chromium 390×844） | ✅ 引导 → 自测 → 结果 → 首页 → 学习 → 终态；**页面报错 0 条** |
+| 横向溢出（5 个路由 × 390px） | ✅ 全部 `横向滚动=false`、**溢出元素 0 个** |
+| 断网降级（DevTools offline） | ✅ 例句降级为通用示例 + 如实标注；**作答与写库不受影响** |
+| **C6 换两个兴趣各跑一次** | ✅ 同一个词 `accordion`，篮球写出篮球版、音乐写出音乐版（原文见验收报告） |
+
+## 本地假模型：没有 Key 也能验通 AI 链路（`scripts/mock-ai-server.mjs`）
+
+真 Key 要实名、要充钱，验收会真的花钱。但**最容易被写错的地方跟模型的智力完全无关**：
+请求体拼得对不对、system 提示词是否逐字稳定、返回的 JSON 外面包着 ``` 时代码崩不崩、
+token 记账拆得对不对。这个 40 行的假模型把这些链路**原样**走一遍。
+
+```bash
+# 终端 A
+node scripts/mock-ai-server.mjs
+# 终端 B
+npm run dev
+```
+然后把 `.env.local` 里的 `AI_BASE_PRIMARY` 指向 `http://127.0.0.1:8787`
+（`.env.example` 底部有一段可直接抄的配置）。
+
+> **它会打印每一通请求的 system 提示词指纹。** 指纹在两次调用之间变了，
+> 就说明提示词里混进了"每次都不同"的东西（时间戳、随机 id、顺序不稳定的字段），
+> 线上缓存命中率会变成 0 —— 而**这个 bug 不报任何错，只会让账单变贵**。
+> 实测两次不同兴趣的请求指纹相同（`38f76819fee8`），缓存分层设计成立。
+
+换档验降级链：`MOCK_MODE=500`（重试 + 降级）/ `garbage`（schema 失败）/ `slow`（超时）/ `empty`（token 取不到记 0）。
+
+> ⚠️ 假模型的句子句式是固定的，所以它证明的是**"兴趣真的进了提示词并影响输出"**，
+> **不是**"例句写得漂亮"。真实质量要等填了真 Key 才知道 —— 这一点别蒙自己。
 
 ## 这一批（B2）交付了什么
 
@@ -238,7 +300,7 @@ pushNotice({ key: "daily-plan", level: "info", title: "今日任务单已排好"
 # 1. 进工程目录（注意路径里有中文，命令要加引号）
 cd "E:\编程\词径记PWA网页应用\cijingji-web"
 
-# 2. 装依赖
+# 2. 装依赖（⚠️ 这一步交给你在自己的终端跑，不要在编辑器里的 AI 会话里跑，原因见下文）
 npm install
 
 # 3. 跑单测（必须全绿，这是每次交付的闸门）
@@ -247,6 +309,21 @@ npm run test
 # 4. 起开发服务器，浏览器打开 http://localhost:3000
 npm run dev
 ```
+
+**第 4 步之前建议先做一件事：把 `.env.local` 建起来。**
+
+不建也能跑（AI 那两档会被跳过，例句落到模板句），但你**验不了"兴趣真的进了例句"**这条核心能力。
+最快的做法是**不花钱**的那条路 —— 用本地假模型：
+
+```bash
+# 终端 A：本地假模型（不需要任何 Key）
+node scripts/mock-ai-server.mjs
+
+# 终端 B：开发服务器
+npm run dev
+```
+再把 `.env.example` 底部那段「本地假模型」的配置抄进 `.env.local` 即可。
+要接真 Key 就删掉 `.env.local`，按 `.env.example` 重填一份。
 
 其他常用命令：
 
@@ -294,6 +371,8 @@ npm audit --registry=https://registry.npmjs.org
 ```
 app/
 ├── (app)/page.tsx            首页 / 今日任务单（未引导则跳 /onboarding）
+├── (app)/study/[sessionId]/page.tsx  学习页（sessionId 就是本地日期）
+├── api/ai/route.ts           ★ AI 服务端网关（Key 只在这条链路；动态路由）
 ├── onboarding/
 │   ├── layout.tsx            引导流程共享外壳
 │   ├── page.tsx              第 1 页：三题问答
@@ -312,6 +391,29 @@ components/
     ├── ConsoleDock.tsx       左下角「小词」悬浮球（进度环 / 手势判定 / 开合 / 网络监听）
     └── ConsolePanel.tsx      展开后的面板（用户层 + 长按才现的开发者层）
 lib/
+├── ai/                       ★ AI 网关（**唯一允许出现模型名的地方**）
+│   ├── config.ts             模型链 / 超时 / 服务端断言。缺 Key 跳档而不抛错
+│   ├── prompt.ts             ★ 纯函数：提示词拼装（system 逐字稳定 + user 变化部分）
+│   ├── provider.ts           OpenAI 兼容调用（不装 SDK，直接 fetch + 超时 + 错误分类）
+│   ├── parse.ts              ★ 纯函数：括号配平扫描取 JSON、剥 ``` 外壳、schema 校验
+│   ├── fallback.ts           模板句与降级原因的人话说明（**永不失败**）
+│   ├── cost.ts               ★ 纯函数：峰谷计价、缓存命中扣减、`priced` 标记
+│   ├── run.ts                降级链 + 重试 + 记账（**失败也记账**）
+│   ├── usageStats.ts         ★ 纯函数：记账汇总，缓存命中率是"省钱设计有没有生效"的唯一仪表盘
+│   └── groundTruth.ts        服务端取词头 / 音标 / 义项（模型不许碰"事实"）
+├── study/                    ★ 学习会话纯函数（无 IO，全部可单测）
+│   ├── cards.ts              出题：种子取 `hashSeed(word_id|mode)`，**同一个词每次卡片一样**
+│   ├── grade.ts              判分 + 错因推导（meaning / spelling / confusion）
+│   ├── rating.ts             三级反馈（1/2/3，与 FSRS 数值对齐；**不开放第 4 档**）
+│   ├── session.ts            队列推进 / Again 回插 / 进度 / 终态汇总
+│   ├── history.ts            从 `review_logs` 推导"今天稳住了哪些词 / 卡住哪些词"
+│   └── mnemonic.ts           阶段 0 固定文案占位（**一句词源都不编**）
+├── plan/
+│   ├── todayPlan.ts          ★ **装配口径唯一实现**（首页 / 结果页 / 学习页共用）
+│   ├── todayProgress.ts      ★ 纯函数：今日完成量（分母恒为任务单长度）
+│   ├── buildDailyPlan.ts     ★ 纯函数：一批词 → 今日任务单
+│   └── estimate.ts           用时估算参数 + dailyCapFor（分钟 → 每日词数，唯一来源）
+├── util/random.ts            ★ 纯函数：固定种子 PRNG（全项目唯一一份）
 ├── console/
 │   ├── notices.ts            ★ 纯函数：提示去重插入 / 上限截断 / 时间格式化 / 告警判定
 │   ├── dock.ts               ★ 纯函数：球的位姿夹取 / 吸附 / 比例换算
@@ -322,25 +424,25 @@ lib/
 │   ├── types.ts              12 张表的类型（字段名与未来 Supabase 逐字一致）
 │   ├── local.ts              Dexie 本地库（IndexedDB）
 │   ├── repo.ts               profiles 读写封装（阶段 1 换 Supabase 只动这里）
+│   ├── studyRepo.ts          review_logs / user_examples / ai_usage / 计划缓存
 │   ├── seed.ts               幂等灌种子
 │   └── seed-data.json        构建产物：由样张转换而来，不手改
 ├── onboarding/
-│   ├── questions.ts          引导题目数据（**是数据不是代码**）
+│   ├── questions.ts          引导题目数据（**是数据不是代码**；含 findGoal / interestLabelEn）
 │   ├── quiz.ts               ★ 纯函数：抽题 / 判分 / 分档
 │   ├── deadline.ts           ★ 纯函数：期限选项与剩余天数
 │   └── attempt.ts            作答的跨页传递（sessionStorage）
 ├── scope/
 │   ├── schema.ts             scope_json 的 zod 校验
 │   └── resolveScope.ts       ★ 纯函数：范围 → 一批词
-├── plan/
-│   ├── buildDailyPlan.ts     ★ 纯函数：一批词 → 今日任务单
-│   └── estimate.ts           用时估算参数 + dailyCapFor（要调只改这里）
 ├── profile/mergeProfile.ts   ★ 纯函数：三层优先级 overrides > phase > goal_profile
 ├── ua/wechat.ts              微信 UA 检测 + 首帧降级脚本
 └── design/tokens.ts          动效与圆角（颜色只在 globals.css，避免两处真相）
 scripts/build-seed.mjs        样张 JSON → seed-data.json
+scripts/mock-ai-server.mjs    ★ 本地假模型：**没有 Key 也能验通 AI 链路**（含 system 指纹体检）
 scripts/gen-app-icon.py       ★ 图标生成（单源）：改图标只改这里，别手改 PNG
 scripts/make-icon-guide.py    从真实图标产物生成「尺寸说明书」配图（文档用）
+.env.example                  ★ 环境变量样例（**入库**；真 Key 在 .env.local，永不入库）
 ```
 
 每个 `lib/` 模块旁边都有同名的 `.test.ts`（跑在真实种子数据 + 构造数据上）。
@@ -400,3 +502,20 @@ scripts/make-icon-guide.py    从真实图标产物生成「尺寸说明书」�
     弹窗就一定会有内容被顶出可视区 —— 实测教训见上文「面板会在球的上下两侧换边」。
     判据做成纯函数（`panelSideFor`）以便单测；封顶高度用 `vh` 表达式在 CSS 里算，
     这样转屏不用写 resize 监听。
+15. **`.env.local` 永不入库，`.env.example` 必须入库。**
+    `.gitignore` 里的 `.env*` 会把 `.env.example` 一起吞掉，所以有一行 `!.env.example` 放行它 ——
+    别人克隆下来第一件事就是照着它建 `.env.local`，漏了就得多问一轮。
+    另外：**不要给这些变量加 `NEXT_PUBLIC_` 前缀**，加了就会被内联进浏览器包，等于公开送 Key。
+16. **装配口径只有一处实现：`lib/plan/todayPlan.ts` 的 `assembleTodayPlan`。**
+    它把 `validateScope → resolveScope → mergeProfile → chooseMode → dailyCapFor → buildDailyPlan`
+    六步收成一个纯函数。**任何页面都不许再写一遍这六步** ——
+    "结果页说 36 个、首页显示 20 个"就是三处各写一遍的直接后果。
+    同理，每日词量只走 `dailyCapFor`，今日完成量只走 `countDoneInPlan`。
+17. **验 AI 链路用本地假模型（`scripts/mock-ai-server.mjs`），不要拿真 Key 去调链路。**
+    真 Key 只用来验"模型写得好不好"这一件事。混在一起验的话，
+    一条链路的 bug 会被误当成"模型不行"，而你会为此真的花钱。
+    改完 `lib/ai/*` 之后跑一遍假模型，顺带看一眼它打印的 system 指纹有没有变 ——
+    指纹变 = 缓存失效 = 账单变贵（而且它**不报错**）。
+18. **`/api/ai` 必须保持动态路由。** 构建产物里它应该是 `ƒ`（按请求渲染）而不是 `○`（静态）。
+    如果哪天它变成静态的，说明 Key 有可能被打进产物 —— 这是硬约束 1 在构建层面的最后一道防线，
+    部署前看一眼 `npm run build` 的那张路由表。
