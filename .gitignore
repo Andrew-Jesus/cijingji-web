@@ -1,0 +1,49 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+# `.env.example` 是**给人看的样例**，里面一个真 Key 都没有，必须跟着仓库走 ——
+# 别人克隆下来第一件事就是照着它建 `.env.local`。所以下面要显式把它放行
+# （`.env*` 这条通配符本来会把它一起吞掉）。
+.env*
+!.env.example
+# 硬约束 3：.env.local 里放着 DeepSeek / GLM 的 API Key，**永远不许进仓库**。
+# 上面 .env* 已经覆盖，这里再单独写一行是为了让这件事显式可见，不靠通配符的印象。
+.env.local
+.env.local.*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts

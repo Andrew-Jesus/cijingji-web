@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+/*
+ * 词径记 · 设计变量（莫兰迪柔感治愈）
+ *
+ * 硬约束：组件里禁止写死任何颜色，只能用这里的语义类名
+ * （bg-surface / text-secondary / border-subtle / bg-brand-600 ...）。
+ * 色板底稿来自 规格书 §10.1；等真实界面跑出来再微调（A4）。
+ */
+@theme {
+  /* 基础面：三档，从亮到暗 —— 白卡 surface ＞ 页面 page ＞ 底衬 feature */
+  --color-page: #f7f5f2; /* 暖白底 */
+  --color-surface: #ffffff;
+  --color-sunken: #efebe5;
+  /* 重点面：首页主卡的底衬（像托着纸片的托盘）。
+     **必须留在暖色家族里** —— 早先这里用了冷蓝灰（brand-50），
+     放在暖白页面上会发青、跟整页的暖调打架，已废弃该用法。
+     只有一档，比 page 深、比描边 strong 浅，不抢白卡。 */
+  --color-feature: #ece5da;
+
+  /* 文字（这三个只当 text-* 用，不要拿去当背景色） */
+  --color-primary: #3a3733;
+  --color-secondary: #7a736b;
+  --color-tertiary: #a8a099;
+
+  /* 描边 */
+  --color-subtle: #e8e3db;
+  --color-strong: #d6cfc5;
+
+  /* 主色：莫兰迪蓝灰 */
+  --color-brand-50: #eef2f5;
+  --color-brand-400: #9baebd;
+  --color-brand-600: #7c93a8;
+  --color-brand-800: #5a7286;
+  /* 铺在主色块上的文字色（主色是中间调，配白字对比度才够） */
+  --color-on-brand: #ffffff;
+
+  /* 强调：莫兰迪陶土 */
+  --color-accent-50: #f5e9e4;
+  --color-accent-600: #c08b7a;
+  --color-accent-800: #9c6a5a;
+
+  /* 语义色 */
+  --color-success-50: #e9f0e9;
+  --color-success-600: #8aa68c;
+  --color-warning-50: #f6efdd;
+  --color-warning-600: #c9a961;
+  --color-danger-50: #f5e5e2;
+  --color-danger-600: #b5746a;
+
+  /* 小词进度环的"跑道"（未完成那一圈）。
+     它压在**深色圆盘**上，所以必须是半透明白 —— 用页面上的灰（--color-strong）
+     会在深底上糊成一条脏线。只有这一处用它，别拿去当页面背景色。 */
+  --color-track-on-dark: rgb(255 255 255 / 0.2);
+
+  /* 圆角 */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+
+  /* 投影：全项目**只有这两个**。
+     普通卡片一律不投影（柔感风格靠描边和留白分层，见首页注释）；
+     但"浮在内容之上"的元素（左下角的控制台球与控制台面板）必须有，
+     否则会跟身后的正文黏在一起、看不出层级。
+     色相直接取图标底的暖黑 #2b2a27，跟品牌图标同一族，不会发灰发冷。 */
+  --shadow-float: 0 12px 28px -14px rgb(43 42 39 / 0.5), 0 2px 6px -3px rgb(43 42 39 / 0.16);
+  /* 有 warning/danger 级提示时套在球外的一圈柔光（陶土色，跟强调色同源） */
+  --shadow-alert: 0 0 0 3px rgb(192 139 122 / 0.26), 0 12px 28px -14px rgb(43 42 39 / 0.5);
+
+  /* 缓动：柔和收尾，无回弹（禁 bounce 是产品级硬约束） */
+  --ease-soft: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* ⚠️ 这三个**不是** Tailwind 的 duration 命名空间。
+     写成 `duration-base` / `duration-fast` 这种类名，**不报错、不生成任何 CSS、静默失效**
+     （Tailwind v4 认的只有 `duration-<数字>`）。2026-09-19 核产物 CSS 时抓到过一次。
+     它们只服务：本文件里的 @keyframes（rise-in 用 --duration-slow）、
+     以及 lib/design/tokens.ts 里给 Framer Motion 的那份参数。
+     **组件里请写数字**：duration-160 / duration-200 / duration-240。 */
+  --duration-fast: 160ms;
+  --duration-base: 200ms;
+  --duration-slow: 240ms;
+
+  /* 中文优先的系统字体栈：不下载字体，冷启动最快 */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+}
+
+/* 动效开关：**只动 translate / scale / opacity**。
+   微信 UA 或用户偏好减少动效时，把位移量归零、只留淡入（见 lib/ua/wechat.ts）。 */
+:root {
+  --motion-shift: 8px;
+}
+
+[data-motion="reduced"] {
+  --motion-shift: 0px;
+}
+
+/* 所有带 data-animated 的元素，在降级模式下一律取消位移与循环动画 */
+[data-motion="reduced"] [data-animated] {
+  transition-property: opacity;
+  animation: none;
+}
+
+/*
+ * 入场动画：全项目**唯一**的位移方向。
+ * 只动 opacity + translateY —— 不做 3D transform、不用 will-change、不 bounce。
+ * 配合 React 的 key 变更重挂载来重放（见 onboarding 三页）。
+ */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-shift));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+[data-animated] {
+  animation: rise-in var(--duration-slow) var(--ease-soft) both;
+}
+
+/* 小词的面板长在球**下方**时，入场方向镜像一下：仍然走同一个 rise-in、
+   同一个 --motion-shift，只是反过来从上方落下 —— 读起来才像"从球里长出来"，
+   而不是穿过球钻出来。只改一个变量，不动 keyframes，
+   「全项目唯一入场动画」这条依然成立。
+   （`data-motion="reduced"` 下这句虽然也命中，但那里 animation 已被关掉，
+     所以不会漏出位移。） */
+[data-animated][data-rise="down"] {
+  --motion-shift: -8px;
+}
+
+/* 尊重系统的"减少动态效果"：即使不是微信也降级 */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-shift: 0px;
+  }
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-page);
+  color: var(--color-primary);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 不做深色模式：本产品是暖白底治愈系，误触系统深色会破坏调性 */
