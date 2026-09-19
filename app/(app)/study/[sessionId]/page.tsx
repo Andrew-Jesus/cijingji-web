@@ -523,7 +523,9 @@ export default function StudyPage() {
     );
   }
 
-  const progress = progressAt(queue, pos);
+  // 分母传任务单的词数（不是队列长度）—— 与首页的「36 个词」是同一个数。
+  // 队列长度会因 Again 回插而变大，用它当分母会让顶部走到 37/38，两个界面对不上。
+  const progress = progressAt(queue, pos, session.cards.length);
   const alreadyDone = queue.length === 0 && pos === 0;
 
   return (

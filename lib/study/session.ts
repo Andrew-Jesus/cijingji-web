@@ -80,9 +80,40 @@ export function advance(
   return { queue: next, nextPos, finished: nextPos >= next.length };
 }
 
-/** 当前进度（给进度条用）。分母是**当时的队列长度** —— Again 回插会让总数变大，这是对的 */
-export function progressAt(queue: readonly QueueEntry[], pos: number): { done: number; total: number } {
-  return { done: Math.min(pos, queue.length), total: queue.length };
+/**
+ * 当前进度（给顶部进度条用）。
+ *
+ * ── 分母是什么，这里改过一次口径（2026-09-19，Andy 拍板）──────────
+ * 现在是**今天任务单的词数**（distinct 词），不再用队列长度。
+ *
+ * 旧写法拿队列长度当分母，有个副作用：答错时 Again 会回插一张，
+ * 队列变长，顶部于是会走到 37 / 38 —— 而首页明明写着「36 个词」。
+ * 两个数字各自都没错（首页 36 = 今天该练的词；旧分母 = 今天要点几下），
+ * 但并排放着就让人犯嘀咕，而用户看到的只有一个界面。
+ *
+ * 新口径与首页对齐：**用"今天该练的词"做分母，"已经不用再练的词"做分子**。
+ * 判据是"这个词还会不会出现在当前位置往后"——
+ *   - 一次答对 → 它往后不再出现 → 记 +1
+ *   - 答错回插 → 它还会再出现一次 → 不记
+ * 于是：走完时进度条正好停满（36 / 36），中途答错也不会把分母撑大，
+ * 同一个词练过两遍也仍然只算一个词。
+ *
+ * `totalWords` 由调用方给（学习页传的就是任务单的卡片数）——
+ * 这里的 `queue` 在装载时已经滤掉了"今天已结清"的词，
+ * 所以两者相减得到的"已完成"天然与首页的今日进度是同一个数。
+ */
+export function progressAt(
+  queue: readonly QueueEntry[],
+  pos: number,
+  totalWords: number,
+): { done: number; total: number } {
+  const total = Math.max(totalWords, 0);
+  const pending = new Set<string>();
+  for (let i = Math.max(pos, 0); i < queue.length; i += 1) {
+    const entry = queue[i];
+    if (entry) pending.add(entry.card.word_id);
+  }
+  return { done: Math.max(total - pending.size, 0), total };
 }
 
 /**

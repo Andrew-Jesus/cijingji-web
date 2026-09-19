@@ -99,14 +99,35 @@ describe("advance / 队列推进", () => {
 });
 
 describe("progressAt", () => {
-  it("分母是**当时的**队列长度 —— Again 回插会让总数变大，这是对的", () => {
-    expect(progressAt(queue(["w:a", "w:b"]), 1)).toEqual({ done: 1, total: 2 });
+  it("分母是任务单的词数 —— 答错回插不会把分母撑大（这就是首页说的那个 36）", () => {
+    // 两个词的任务单，答完第一个
+    expect(progressAt(queue(["w:a", "w:b"]), 1, 2)).toEqual({ done: 1, total: 2 });
+
+    // 第一个词答错 → 队列回插一张、长度变 2，但**分母仍是"一个词的任务单"**
     const r = advance(queue(["w:a"]), 0, 1);
-    expect(progressAt(r.queue, r.nextPos)).toEqual({ done: 1, total: 2 });
+    expect(r.queue).toHaveLength(2);
+    expect(progressAt(r.queue, r.nextPos, 1)).toEqual({ done: 0, total: 1 });
+  });
+
+  it("走完时正好停满 —— 不会停在 35/36，也不会冲过 36", () => {
+    const r = advance(queue(["w:a", "w:b"]), 1, 3);
+    expect(progressAt(r.queue, r.nextPos, 2)).toEqual({ done: 2, total: 2 });
+  });
+
+  it("分子数的是「词」不是「点击」—— 同一个词练两遍仍然只记一个词", () => {
+    // 队列里 w:a 出现两次（回插的那张），但这份任务单只有 1 个词
+    const q: QueueEntry[] = [
+      { card: card("w:a"), round: 0 },
+      { card: card("w:a"), round: 1 },
+    ];
+    // 第一遍走过了，但它还在后面等着 → 还没结清
+    expect(progressAt(q, 1, 1)).toEqual({ done: 0, total: 1 });
+    // 两遍都走完 → 结清
+    expect(progressAt(q, 2, 1)).toEqual({ done: 1, total: 1 });
   });
 
   it("done 不超过 total（进度条不会画过头）", () => {
-    expect(progressAt(queue(["w:a"]), 99)).toEqual({ done: 1, total: 1 });
+    expect(progressAt(queue(["w:a"]), 99, 1)).toEqual({ done: 1, total: 1 });
   });
 });
 
