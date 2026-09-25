@@ -40,6 +40,27 @@ describe("templateExample / 兜底句", () => {
     expect(templateExample(facts, "calligraphy").sentence).toContain("everyday life");
   });
 
+  /**
+   * 回归测试：**同一句里的中英文必须同源**。
+   * 真实踩过的坑 —— 英文写 `everyday life`、中文却写着「我们聊到 calligraphy 的时候」，
+   * 一句话前后打架。根因是中英两个名字各调了一个函数，
+   * 而它们对"认不出的 tag"处理方式不同（一支回落、一支原样返回）。
+   */
+  it("认不出的 tag：中英两边都回落兜底话题，**不许一边回落一边原样**", () => {
+    const { sentence, gloss } = templateExample(facts, "calligraphy");
+
+    expect(sentence).toContain("everyday life");
+    expect(gloss).toContain("日常话题");
+    expect(gloss).not.toContain("calligraphy");
+  });
+
+  it("认得出的 tag：中英两边都用这个兴趣域自己的名字", () => {
+    const { sentence, gloss } = templateExample(facts, "basketball");
+
+    expect(sentence).toContain("basketball and football");
+    expect(gloss).toContain("篮球 / 足球");
+  });
+
   it("任何词性都能套用同一个句式（这才是选元句式而不是 I like X 的理由）", () => {
     for (const lemma of ["ancient", "carefully", "run", "make up one's mind"]) {
       const { sentence } = templateExample({ ...facts, lemma }, "music");

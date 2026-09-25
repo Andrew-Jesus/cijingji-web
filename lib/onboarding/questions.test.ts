@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  GENERIC_INTEREST_LABEL,
+  GENERIC_INTEREST_LABEL_EN,
+  GENERIC_INTEREST_TAG,
   GOAL_OPTIONS,
   INTEREST_OPTIONS,
   MAX_INTERESTS,
@@ -8,6 +11,7 @@ import {
   findGoal,
   interestLabel,
   isGoalSupported,
+  resolveInterest,
 } from "./questions";
 
 describe("questions / 数据本身的自洽性", () => {
@@ -84,6 +88,47 @@ describe("interestLabel", () => {
 
   it("未知 tag → 原样返回（不抛异常、不显示空白）", () => {
     expect(interestLabel("calligraphy")).toBe("calligraphy");
+  });
+});
+
+describe("resolveInterest / 中英文名必须同源", () => {
+  it("真实兴趣：中英各拿各的名字，标记为 personalized", () => {
+    expect(resolveInterest("basketball")).toEqual({
+      label: "篮球 / 足球",
+      labelEn: "basketball and football",
+      personalized: true,
+    });
+  });
+
+  it("general（一个都没选）→ 两边都是通用话题，并且**如实标成没有个性**", () => {
+    expect(resolveInterest(GENERIC_INTEREST_TAG)).toEqual({
+      label: GENERIC_INTEREST_LABEL,
+      labelEn: GENERIC_INTEREST_LABEL_EN,
+      personalized: false,
+    });
+  });
+
+  /**
+   * 回归测试：这是那个"同一句话中英打架"的坑。
+   * 认不出的 tag（老数据里已下线的 tag / 前端漏传）**必须两边一起回落**，
+   * 而不是英文回落 everyday life、中文却把原样值印出来。
+   */
+  it("认不出的 tag → 中英一起回落兜底话题（不许一边回落一边原样）", () => {
+    expect(resolveInterest("calligraphy")).toEqual({
+      label: GENERIC_INTEREST_LABEL,
+      labelEn: GENERIC_INTEREST_LABEL_EN,
+      personalized: false,
+    });
+  });
+
+  it("认得出的 tag 一律中英都取到（任何一个兴趣域都不许只给一半）", () => {
+    for (const option of INTEREST_OPTIONS) {
+      expect(resolveInterest(option.tag)).toEqual({
+        label: option.label,
+        labelEn: option.label_en,
+        personalized: true,
+      });
+    }
   });
 });
 

@@ -15,7 +15,7 @@
  * 另外这条模板**不可能编造事实**：它只用已确认的三样东西 ——
  * 单词本身、中文词义、兴趣域名字。这正好和"AI 不许编事实"是同一个底线。
  */
-import { GENERIC_INTEREST_LABEL_EN, interestLabel, interestLabelEn } from "@/lib/onboarding/questions";
+import { GENERIC_INTEREST_LABEL_EN, resolveInterest } from "@/lib/onboarding/questions";
 import type { WordFacts } from "./prompt";
 
 export interface TemplateExample {
@@ -32,12 +32,14 @@ export interface TemplateExample {
  * 换成 "I like ${lemma}" 那种，遇到 ancient / carefully 就立刻错。
  */
 export function templateExample(facts: WordFacts, interestTag: string): TemplateExample {
-  const en = interestLabelEn(interestTag);
-  const zh = interestLabel(interestTag);
+  // 中英两个名字**成对取**（见 `resolveInterest`）——
+  // 这两句是同一句话的两面，一边说 everyday life、一边说「篮球」，
+  // 用户第一眼就会觉得这产品很糙。
+  const { labelEn, label } = resolveInterest(interestTag);
 
   return {
-    sentence: `We used the word "${facts.lemma}" when we talked about ${en}.`,
-    gloss: `我们聊到${zh}的时候，用到了 ${facts.lemma} 这个词。`,
+    sentence: `We used the word "${facts.lemma}" when we talked about ${labelEn}.`,
+    gloss: `我们聊到${label}的时候，用到了 ${facts.lemma} 这个词。`,
   };
 }
 

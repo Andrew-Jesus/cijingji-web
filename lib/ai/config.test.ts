@@ -8,6 +8,7 @@ import {
   DEFAULT_RETRY_BACKOFF_MS,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_TOTAL_BUDGET_MS,
+  FREE_TIMEOUT_MS,
   MIN_ATTEMPT_MS,
   PROVIDERS,
   resolveCooldownMs,
@@ -15,6 +16,7 @@ import {
   resolveModelChainForTask,
   resolveRetryBackoffMs,
   resolveTimeoutMs,
+  resolveTimeoutMsFor,
   resolveTotalBudgetMs,
   TIER_ORDER,
   hasAnyProvider,
@@ -133,6 +135,56 @@ describe("resolveTimeoutMs", () => {
   });
 });
 
+describe("resolveTimeoutMsFor / 超时按档算（免费档不再被拖满 12 秒）", () => {
+  it("内置默认：付费档 12 秒、免费档 4 秒 —— 免费档明显更短是刻意的", () => {
+    expect(resolveTimeoutMsFor("deepseek", {})).toBe(DEFAULT_TIMEOUT_MS);
+    expect(resolveTimeoutMsFor("glm", {})).toBe(FREE_TIMEOUT_MS);
+    expect(FREE_TIMEOUT_MS).toBeLessThan(DEFAULT_TIMEOUT_MS);
+  });
+
+  it("单档专设最优先：AI_TIMEOUT_GLM_MS 只改 GLM，不动 DeepSeek", () => {
+    const env = { AI_TIMEOUT_GLM_MS: "8000" };
+    expect(resolveTimeoutMsFor("glm", env)).toBe(8000);
+    expect(resolveTimeoutMsFor("deepseek", env)).toBe(DEFAULT_TIMEOUT_MS);
+  });
+
+  it("全局总开关一改全改 —— **包括免费档**（设了不生效比没有开关更让人困惑）", () => {
+    const env = { AI_TIMEOUT_MS: "6000" };
+    expect(resolveTimeoutMsFor("glm", env)).toBe(6000);
+    expect(resolveTimeoutMsFor("deepseek", env)).toBe(6000);
+  });
+
+  it("优先级：单档专设 > 全局总开关", () => {
+    expect(
+      resolveTimeoutMsFor("glm", { AI_TIMEOUT_MS: "6000", AI_TIMEOUT_GLM_MS: "8000" }),
+    ).toBe(8000);
+  });
+
+  it("乱填/零/负数都回落本来该有的默认（不许变成 0 秒这种「立刻超时」的疯值）", () => {
+    expect(resolveTimeoutMsFor("glm", { AI_TIMEOUT_GLM_MS: "abc" })).toBe(FREE_TIMEOUT_MS);
+    expect(resolveTimeoutMsFor("glm", { AI_TIMEOUT_GLM_MS: "0" })).toBe(FREE_TIMEOUT_MS);
+    expect(resolveTimeoutMsFor("glm", { AI_TIMEOUT_GLM_MS: "-1" })).toBe(FREE_TIMEOUT_MS);
+  });
+
+  it("链路里每一档都带着自己的超时（调用方不必再查一次环境变量）", () => {
+    const chain = resolveModelChain("cheap", { DEEPSEEK_API_KEY: "d", GLM_API_KEY: "g" });
+    expect(chain.map((c) => [c.provider, c.timeoutMs])).toEqual([
+      ["deepseek", DEFAULT_TIMEOUT_MS],
+      ["glm", FREE_TIMEOUT_MS],
+    ]);
+  });
+
+  it("免费档的默认超时**必须大于**一次尝试的最低门槛（否则它压根开不了）", () => {
+    expect(FREE_TIMEOUT_MS).toBeGreaterThan(MIN_ATTEMPT_MS);
+  });
+
+  it("每一档都登记了专设变量名（漏登记 = 设了不生效，而且不报错）", () => {
+    for (const def of Object.values(PROVIDERS)) {
+      expect(def.timeoutEnv).toMatch(/^AI_TIMEOUT_[A-Z_]+_MS$/);
+    }
+  });
+});
+
 describe("resolveTotalBudgetMs / 整条链的总预算", () => {
   it("默认 20 秒（没有它，最坏情况是 2 档 × 2 次 × 12 秒 = 48 秒）", () => {
     expect(resolveTotalBudgetMs({})).toBe(DEFAULT_TOTAL_BUDGET_MS);
@@ -140,6 +192,13 @@ describe("resolveTotalBudgetMs / 整条链的总预算", () => {
 
   it("预算不得小于单档超时 —— 否则第一档都开不了", () => {
     expect(resolveTotalBudgetMs({ AI_TIMEOUT_MS: "30000" })).toBe(30_000);
+  });
+
+  it("某档被**单独**设了更长的超时，预算要跟着抬 —— 否则那一档直接被预算砍掉", () => {
+    // 只给 GLM 设 30 秒：预算若还按 5 秒算，这一档永远开不出来
+    expect(resolveTotalBudgetMs({ AI_TOTAL_BUDGET_MS: "5000", AI_TIMEOUT_GLM_MS: "30000" })).toBe(
+      30_000,
+    );
   });
 
   it("乱填回落默认，且上限封在 120 秒", () => {

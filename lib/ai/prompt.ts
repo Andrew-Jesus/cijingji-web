@@ -17,12 +17,7 @@
  * AI 只负责"把已知事实写进他感兴趣的场景"。所以提示词里给的是事实，
  * 而不是让模型"回忆"这个词是什么意思 —— 后者一定会编。
  */
-import {
-  GENERIC_INTEREST_LABEL,
-  GENERIC_INTEREST_TAG,
-  interestLabel,
-  interestLabelEn,
-} from "@/lib/onboarding/questions";
+import { GENERIC_INTEREST_LABEL, resolveInterest } from "@/lib/onboarding/questions";
 import type { AiTaskId } from "./config";
 
 /** 服务端查出来的单词事实。**这是 ground truth，模型只能用它、不能改它** */
@@ -76,13 +71,14 @@ const EXAMPLE_SYSTEM = [
 ].join("\n");
 
 function buildExampleVariable({ facts, interestTag }: PromptInput): string {
-  // 中文名只用于给自己看/排查；进提示词的是英文名与中文名都可能有用的组合。
-  // 这里两个都给：英文名让模型直接用，中文名防止标签是多义词时理解偏。
-  const en = interestLabelEn(interestTag);
-  const zh = interestLabel(interestTag);
+  // 中英两个名字**必须成对取**（见 `resolveInterest` 的注释）：
+  // 各调一个函数会在"认不出的 tag"上得出互相打架的两个名字 ——
+  // 模型接到「英文 everyday life（中文 篮球）」这种自相矛盾的输入，写出来的句子也跟着拧巴。
+  // 两个都给的原因：英文名让它直接用，中文名防止标签是多义词时理解偏。
+  const { labelEn, label } = resolveInterest(interestTag);
 
   return [
-    `话题：${en}（${zh}）`,
+    `话题：${labelEn}（${label}）`,
     `单词：${facts.lemma}`,
     `音标：${facts.phonetic ?? "（未收录，不必在句子里体现音标）"}`,
     `词性：${facts.pos ?? "（未收录）"}`,
@@ -111,9 +107,16 @@ export function fixedPrefixLength(task: AiTaskId): number {
   return TASK_SPECS[task].system.length;
 }
 
-/** 「一个兴趣都没选」时，界面上要如实说明，而不是假装是有个性的例句 */
+/**
+ * 这句话是不是"没有个性"的（落到了日常话题）——
+ * 界面据此如实说明，而不是假装这是按他的兴趣写的例句。
+ *
+ * 判据走 `resolveInterest().personalized`，而不是"等不等于 general"：
+ * 传进来一个认不出的 tag 时（老数据里已下线的 tag、或前端漏传），
+ * 实际效果同样是通用话题，界面就该照实说。
+ */
 export function isGenericInterest(interestTag: string): boolean {
-  return interestTag === GENERIC_INTEREST_TAG;
+  return !resolveInterest(interestTag).personalized;
 }
 
 export { GENERIC_INTEREST_LABEL };

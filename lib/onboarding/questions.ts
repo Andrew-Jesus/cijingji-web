@@ -100,10 +100,50 @@ export function interestLabel(tag: string): string {
  * 查不到就**回落兜底话题的英文名**而不是原样返回 ——
  * 因为下游是"拼一句英文"，塞一个未知 tag（可能是中文）进去会拼出坏句子。
  * 中文界面那一路（interestLabel）可以原样返回，英文这一路不行，这是两者的关键差别。
+ *
+ * ⚠️ **要在同一句里同时用上中英两个名字时，别各调一个 —— 用 `resolveInterest`。**
+ * 这两支对"查不到的 tag"处理方式不同（一支原样返回、一支回落），
+ * 单看各自都对，拼在一起就会自相矛盾（英文说 everyday life、中文说「篮球」）。
  */
 export function interestLabelEn(tag: string): string {
   if (tag === GENERIC_INTEREST_TAG) return GENERIC_INTEREST_LABEL_EN;
   return INTEREST_OPTIONS.find((o) => o.tag === tag)?.label_en ?? GENERIC_INTEREST_LABEL_EN;
+}
+
+/**
+ * 兴趣域 tag 的**成对解析**：中文名与英文名一次取出来，**保证两者同源**。
+ *
+ * 为什么要有它（真实踩过的坑）：兜底例句曾经拼出这么一句 ——
+ * 英文写 `when we talked about everyday life`，中文却写「我们聊到篮球的时候」，
+ * 同一句话前后打架。根因就是中英两个名字各调了一个函数，
+ * 而它们对"认不出的 tag"处理方式不同。
+ * 只要中英必须出现在同一句里（兜底例句、提示词），就得走这一个入口。
+ *
+ * 认不出的 tag 一律当通用话题处理 —— 这是**如实的降级**，不是假装很个性。
+ */
+export interface ResolvedInterest {
+  /** 中文名。没命中具体兴趣时 = 通用话题的中文名 */
+  label: string;
+  /** 英文名。没命中具体兴趣时 = 通用话题的英文名 */
+  labelEn: string;
+  /**
+   * 是不是**真的有个具体兴趣**。
+   * `general`（一个都没选）与认不出的 tag 都是 `false` ——
+   * 这两者对界面的含义完全一样：这句话没有个性，要照实标注。
+   */
+  personalized: boolean;
+}
+
+export function resolveInterest(tag: string): ResolvedInterest {
+  // `general` 本身不在 `INTEREST_OPTIONS` 里，所以它和"认不出的 tag"一样落到兜底支，
+  // 而兜底支给出的正是通用话题的名字 —— 两种情况天然拿到同一套文案，不用特判。
+  const hit = INTEREST_OPTIONS.find((o) => o.tag === tag);
+  if (hit) return { label: hit.label, labelEn: hit.label_en, personalized: true };
+  return {
+    label: GENERIC_INTEREST_LABEL,
+    labelEn: GENERIC_INTEREST_LABEL_EN,
+    personalized: false,
+  };
 }
 
 /**

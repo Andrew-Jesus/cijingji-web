@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_COOLDOWN_MS, DEFAULT_RETRY_BACKOFF_MS, type EnvLike } from "./config";
+import {
+  DEFAULT_COOLDOWN_MS,
+  DEFAULT_RETRY_BACKOFF_MS,
+  DEFAULT_TIMEOUT_MS,
+  FREE_TIMEOUT_MS,
+  type EnvLike,
+} from "./config";
 import type { WordFacts } from "./prompt";
 import { ProviderError } from "./provider";
 import { createCooldownStore } from "./retry";
@@ -245,6 +251,32 @@ describe("总预算：宁可给模板句，也不让用户干等", () => {
     for (const c of calls) expect(c.timeoutMs).toBeLessThanOrEqual(12_000);
     // 退避吃掉预算之后，后面的尝试窗口只会越来越短
     expect(calls[calls.length - 1].timeoutMs).toBeLessThan(12_000);
+  });
+});
+
+describe("超时按档算：免费档卡住时不再白等 12 秒", () => {
+  const fourFails: Step[] = [
+    { kind: "err", err: http(500) },
+    { kind: "err", err: http(500) },
+    { kind: "err", err: http(500) },
+    { kind: "err", err: http(500) },
+  ];
+
+  it("同一条链上，GLM 的等待窗口比 DeepSeek 短（免费档并发 1，陪它多等基本是白等）", async () => {
+    const { calls } = await run(fourFails);
+
+    const ds = calls.find((c) => c.provider === "deepseek");
+    const glm = calls.find((c) => c.provider === "glm");
+    expect(ds?.timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
+    expect(glm?.timeoutMs).toBe(FREE_TIMEOUT_MS);
+    expect(glm!.timeoutMs).toBeLessThan(ds!.timeoutMs);
+  });
+
+  it("单独给某一档设超时真的会传到底层调用（AI_TIMEOUT_GLM_MS）", async () => {
+    const { calls } = await run(fourFails, { env: { ...BOTH, AI_TIMEOUT_GLM_MS: "9000" } });
+
+    expect(calls.find((c) => c.provider === "glm")?.timeoutMs).toBe(9000);
+    expect(calls.find((c) => c.provider === "deepseek")?.timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
   });
 });
 

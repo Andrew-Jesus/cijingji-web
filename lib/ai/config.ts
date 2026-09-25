@@ -18,8 +18,9 @@
  * → **稳定优先，不为了省这点钱牺牲可用性。**
  *
  * 档位（`cheap` / `standard`）这个机制**保留备用**：它是"谁排前面"的唯一落点 ——
- * 将来要给某一类活单独换顺序、给免费档单独设更短超时、或加第三家，
- * 都只改本文件这两张表（`TIER_ORDER` / `AI_TASK_TIER`），业务代码一行不用动。
+ * 将来要给某一类活单独换顺序、或加第三家，都只改本文件这两张表
+ * （`TIER_ORDER` / `AI_TASK_TIER`），业务代码一行不用动。
+ * （"免费档单独设更短超时"已经在 2026-09-25 落地，见 `resolveTimeoutMsFor`。）
  *
  * ── Key 的边界（硬约束，踩过坑）──────────────────────────────
  * 这个文件只在**服务端**被 import（`app/api/ai/route.ts` 那条链路）。
@@ -58,6 +59,8 @@ export interface ProviderDef {
   modelEnv: string;
   /** 覆盖端点地址的环境变量名 */
   baseEnv: string;
+  /** 单独覆盖**这一档**超时的环境变量名（优先级最高，见 `resolveTimeoutMsFor`） */
+  timeoutEnv: string;
   /** 模型名默认值 —— 全项目只此一处（`.env.example` 里那份是给人看的说明） */
   defaultModel: string;
   defaultBase: string;
@@ -88,6 +91,7 @@ export const PROVIDERS: Record<ProviderId, ProviderDef> = {
     keyEnv: "DEEPSEEK_API_KEY",
     modelEnv: "AI_MODEL_DEEPSEEK",
     baseEnv: "AI_BASE_DEEPSEEK",
+    timeoutEnv: "AI_TIMEOUT_DEEPSEEK_MS",
     defaultModel: "deepseek-flash",
     defaultBase: "https://api.deepseek.com",
     free: false,
@@ -98,6 +102,7 @@ export const PROVIDERS: Record<ProviderId, ProviderDef> = {
     keyEnv: "GLM_API_KEY",
     modelEnv: "AI_MODEL_GLM",
     baseEnv: "AI_BASE_GLM",
+    timeoutEnv: "AI_TIMEOUT_GLM_MS",
     defaultModel: "glm-4.7-flash",
     defaultBase: "https://open.bigmodel.cn/api/paas/v4",
     free: true,
@@ -131,11 +136,28 @@ export const AI_TASK_TIER: Record<AiTaskId, AiTaskTier> = {
 /* ══════════════════════════ 超时与预算 ══════════════════════════ */
 
 /**
- * 单次请求超时。定 12 秒的依据：
+ * **付费档**的单次请求超时。定 12 秒的依据：
  *   例句只有 1~2 句，正常 1~3 秒；超过 12 秒用户已经在等得不耐烦了，
  *   这时候**换下一档比继续等更快**。宁可降级，不要卡住。
  */
 export const DEFAULT_TIMEOUT_MS = 12_000;
+
+/**
+ * **免费档**（`free: true`）的单次请求超时 —— 明显比付费档短，这是刻意的。
+ *
+ * 为什么不能跟付费档共用一个数（真实踩过的坑）：免费档**并发只有 1**，
+ * 高峰期撞上限流时不会立刻报错，而是**把我们挂在那里**，
+ * 于是每次请求都要**眼睁睁等满 12 秒**才肯换档 —— 而它正常只要 1~3 秒。
+ * 换句话说：陪它多等的那 8 秒，几乎注定是白等。
+ * 超过 4 秒基本就等于"这一档现在被卡住了"，不如把时间让给下一档。
+ *
+ * 判据是"这一档有没有免费档的脾气"（`ProviderDef.free`），不是写死哪一家 ——
+ * 哪天把 GLM 换成付费档，把 `free` 改成 `false` 即可，这里自动跟着走。
+ */
+export const FREE_TIMEOUT_MS = 4_000;
+
+/** 单次请求超时的上限。再长也没有意义 —— 用户早就走人了 */
+const TIMEOUT_CAP_MS = 60_000;
 
 /**
  * **整条链的总预算**（从第一次调用算起）。
@@ -225,6 +247,11 @@ export interface ModelSpec {
   apiKey: string;
   /** 免费额度模型：有并发限制、速度不稳，界面上要如实区分 */
   free: boolean;
+  /**
+   * 这一档的单次请求超时（毫秒）。**随档位一起解析好带下来**，
+   * 调用方（`run.ts`）不必自己再查环境变量 —— 少一处"忘了按档算"的机会。
+   */
+  timeoutMs: number;
 }
 
 function readEnv(env: EnvLike, key: string): string | undefined {
@@ -255,6 +282,7 @@ export function resolveModelChain(
       baseUrl: (readEnv(env, def.baseEnv) ?? def.defaultBase).replace(/\/+$/, ""),
       apiKey,
       free: def.free,
+      timeoutMs: resolveTimeoutMsFor(def.id, env),
     });
   }
   return chain;
@@ -271,20 +299,51 @@ function readPositiveInt(raw: string | undefined, fallback: number, max: number)
   return Math.min(Math.round(n), max);
 }
 
+/**
+ * **全局总开关**：`AI_TIMEOUT_MS`，没设时回落付费档的默认值。
+ * 它是"所有档一律用这个超时"的意思，日常不用动 —— 逐档的超时请走 `resolveTimeoutMsFor`。
+ */
 export function resolveTimeoutMs(env: EnvLike = process.env): number {
-  // 上限 60 秒：比这更长的话，用户早就走了，等待没有意义
-  return readPositiveInt(readEnv(env, "AI_TIMEOUT_MS"), DEFAULT_TIMEOUT_MS, 60_000);
+  return readPositiveInt(readEnv(env, "AI_TIMEOUT_MS"), DEFAULT_TIMEOUT_MS, TIMEOUT_CAP_MS);
 }
 
-/** 整条链的总预算。**不得小于单档超时** —— 否则第一档都开不了 */
+/**
+ * 某一档的**单次请求超时**。三级优先，从高到低：
+ *   ① `AI_TIMEOUT_<档名>_MS`（只改这一档，如 `AI_TIMEOUT_GLM_MS`）
+ *   ② `AI_TIMEOUT_MS`（全局总开关，一改全改）
+ *   ③ 内置默认：免费档 `FREE_TIMEOUT_MS`（短）、付费档 `DEFAULT_TIMEOUT_MS`
+ *
+ * ③ 里免费档拿短默认这件事，就是"GLM 卡住时要白等 12 秒"那个毛病的解药。
+ * 但**总开关一旦被显式设过，就一律听总开关** —— 否则用户设了 `AI_TIMEOUT_MS=30000`
+ * 却发现免费档还是 4 秒，那种"设了不生效"比没有开关更让人困惑。
+ */
+export function resolveTimeoutMsFor(id: ProviderId, env: EnvLike = process.env): number {
+  const perProvider = readPositiveInt(readEnv(env, PROVIDERS[id].timeoutEnv), 0, TIMEOUT_CAP_MS);
+  if (perProvider > 0) return perProvider;
+
+  const globalSet = readEnv(env, "AI_TIMEOUT_MS") !== undefined;
+  if (PROVIDERS[id].free && !globalSet) return FREE_TIMEOUT_MS;
+
+  return resolveTimeoutMs(env);
+}
+
+/**
+ * 整条链的总预算。**不得小于"最长的那个单档超时"** —— 否则第一档都开不了。
+ *
+ * 注意分母是**按档算出来的最大超时**，不是一个全局常数：
+ * 曾经这里只比 `AI_TIMEOUT_MS`，于是"给免费档单独设了 8 秒"时预算没跟着抬，
+ * 第一档直接被预算砍掉 —— 属于那种不报错、只是"AI 老是不出句子"的隐蔽故障。
+ */
 export function resolveTotalBudgetMs(env: EnvLike = process.env): number {
-  const t = resolveTimeoutMs(env);
   const budget = readPositiveInt(
     readEnv(env, "AI_TOTAL_BUDGET_MS"),
     DEFAULT_TOTAL_BUDGET_MS,
     120_000,
   );
-  return Math.max(budget, t);
+  const longestSingle = Math.max(
+    ...(Object.keys(PROVIDERS) as ProviderId[]).map((id) => resolveTimeoutMsFor(id, env)),
+  );
+  return Math.max(budget, longestSingle);
 }
 
 export function resolveRetryBackoffMs(env: EnvLike = process.env): number {

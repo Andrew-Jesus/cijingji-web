@@ -13,6 +13,8 @@
  *   ① **每档最多试 2 次**，但重试前**先退避**（默认 1.2 秒）。
  *      不加退避就是这个项目真实踩过的坑：免费档并发 1，超时后立刻重发，
  *      一头撞上还在跑的上一次 → 429，于是**兜底档每次都失败**。
+ *   ①′ **超时按档算**：免费档 4 秒、付费档 12 秒（`config.ts` 的 `resolveTimeoutMsFor`）。
+ *      共用一个数会让免费档被限流时**白等满 12 秒**才换档 —— 另一个真实踩过的坑。
  *   ② **整条链有总预算**（默认 20 秒）。没有它，2 档 × 2 次 × 12 秒 = 最坏 48 秒。
  *   ③ **冷却表**：某一档明确"死"了（余额不足 / Key 错），几分钟内直接跳过 ——
  *      否则每次请求都要在它身上白等一轮。
@@ -31,7 +33,6 @@ import {
   resolveCooldownMs,
   resolveModelChainForTask,
   resolveRetryBackoffMs,
-  resolveTimeoutMs,
   resolveTotalBudgetMs,
   type AiTaskId,
   type EnvLike,
@@ -143,7 +144,6 @@ function failedUsageDraft(task: AiTaskId, spec: ModelSpec, latency: number): AiU
 export async function generateExample(input: GenerateExampleInput): Promise<GenerateExampleOutput> {
   const task: AiTaskId = input.task ?? "example_personalized";
   const now = input.now ?? new Date();
-  const timeoutMs = resolveTimeoutMs(input.env);
   const budgetMs = resolveTotalBudgetMs(input.env);
   const backoffBase = resolveRetryBackoffMs(input.env);
   const cooldownMs = resolveCooldownMs(input.env);
@@ -223,8 +223,9 @@ export async function generateExample(input: GenerateExampleInput): Promise<Gene
         });
         break chainLoop;
       }
-      // 单次超时不许超过剩余预算，否则等于把预算当摆设
-      const attemptTimeoutMs = Math.min(timeoutMs, remaining);
+      // 单次超时**按档算**（免费档比付费档短，理由见 `config.ts` 的 `FREE_TIMEOUT_MS`），
+      // 并且不许超过剩余预算，否则等于把预算当摆设。
+      const attemptTimeoutMs = Math.min(spec.timeoutMs, remaining);
 
       const attemptStarted = clock();
       try {
