@@ -23,6 +23,9 @@
  *   MOCK_MODE=garbage  返回一段不是 JSON 的文本（看 schema 失败的处理）
  *   MOCK_MODE=slow     拖 30 秒才回（看超时）
  *   MOCK_MODE=empty    usage 里不给 token 数（看"取不到就记 0"）
+ *   MOCK_DELAY_MS=3000 每次响应前先等 3 秒 —— 和 MODE 正交，可叠加上面任意一种。
+ *                      专门用来验**时序**类问题，比如"提前写能不能把等待吃掉"：
+ *                      模型慢 3 秒时，有预取的那次提交后仍应 ≈1 秒出句子。
  *
  * ── 想同时模拟"这一家坏、那一家好"怎么办 ────────────────────
  * **再起一个实例、换个端口**，然后让两家分别指向不同端口，例如：
@@ -43,6 +46,9 @@ import { createServer } from "node:http";
 
 const PORT = Number(process.env.MOCK_PORT ?? 8787);
 const MODE = process.env.MOCK_MODE ?? "ok";
+
+/** 每次响应前先等这么久（毫秒）。0 = 立刻回。与 MODE 正交，见文件头 */
+const DELAY_MS = Number(process.env.MOCK_DELAY_MS ?? 0);
 
 /** 从 user 消息里抠出 `话题：xxx（xxx）` 与词头，用来证明"兴趣真的进了提示词" */
 function readPrompt(userText) {
@@ -108,6 +114,9 @@ const server = createServer(async (req, res) => {
       `\n         请求约束：response_format=${JSON.stringify(body.response_format)} · max_tokens=${body.max_tokens} · temperature=${body.temperature}`,
   );
 
+  if (DELAY_MS > 0) {
+    await new Promise((r) => setTimeout(r, DELAY_MS));
+  }
   if (MODE === "slow") {
     await new Promise((r) => setTimeout(r, 30_000));
   }

@@ -9,6 +9,7 @@ import {
   DEFAULT_TIMEOUT_MS,
   DEFAULT_TOTAL_BUDGET_MS,
   FREE_TIMEOUT_MS,
+  MAX_OUTPUT_TOKENS,
   MIN_ATTEMPT_MS,
   PROVIDERS,
   resolveCooldownMs,
@@ -254,5 +255,20 @@ describe("退避与冷却的参数", () => {
 
   it("退避基数填成负数不会等出负数（负数 setTimeout 会变成立刻执行，很隐蔽）", () => {
     expect(backoffMs(0, -5)).toBe(0);
+  });
+});
+
+describe("例句的输出上限", () => {
+  it("是 180 —— 两头都要兜住", () => {
+    // 定这个数的逻辑（2026-09-25 从 300 收到 180）：
+    //   · 太大：模型真的会"先想再答"、多写一段，**输出长度直接就是等待时间**；
+    //   · 太小：写超了会被截断，JSON 就不合法 → 反而降级成模板句。
+    // 提示词已经把内容框死（sentence 6~16 词、gloss ≤30 字），合格输出约 60~90 token，
+    // 180 留了整整一倍余量。改它之前先回看这两条。
+    expect(MAX_OUTPUT_TOKENS).toBe(180);
+  });
+
+  it("比一次合格输出宽裕一倍以上（别手滑调到刚好卡住）", () => {
+    expect(MAX_OUTPUT_TOKENS).toBeGreaterThanOrEqual(150);
   });
 });

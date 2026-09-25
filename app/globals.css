@@ -122,6 +122,48 @@
   animation: rise-in var(--duration-slow) var(--ease-soft) both;
 }
 
+/*
+ * 例句加载态：三个小点依次呼吸。
+ *
+ * 为什么不复用 rise-in：rise-in 是**一次性入场**，这里是**循环的"正在做事"指示**，
+ * 语义不同 —— 混用一个 keyframes 会互相牵制。
+ * 仍然守住那条硬约束：**只动 opacity 与 scale**（不位移、不旋转、无 bounce）。
+ * 1.4 秒一轮、彼此错开 0.16 秒：慢到不催人，又看得出在动。
+ *
+ * 它只表示"在处理"，**不表示进度**，所以不写百分比、不做进度条 ——
+ * 例句生成没有可信的进度可报，编一个出来就是骗人。
+ */
+@keyframes example-dot-breathe {
+  0%,
+  60%,
+  100% {
+    opacity: 0.28;
+    transform: scale(0.8);
+  }
+  25% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.example-dot {
+  animation: example-dot-breathe 1.4s var(--ease-soft) infinite;
+}
+
+.example-dot:nth-child(2) {
+  animation-delay: 160ms;
+}
+
+.example-dot:nth-child(3) {
+  animation-delay: 320ms;
+}
+
+/* 「减少动态效果」下停住：点还留在那儿（仍看得出"在处理"），只是不再动 */
+[data-motion="reduced"] .example-dot {
+  animation: none;
+  opacity: 0.5;
+}
+
 /* 小词的面板长在球**下方**时，入场方向镜像一下：仍然走同一个 rise-in、
    同一个 --motion-shift，只是反过来从上方落下 —— 读起来才像"从球里长出来"，
    而不是穿过球钻出来。只改一个变量，不动 keyframes，

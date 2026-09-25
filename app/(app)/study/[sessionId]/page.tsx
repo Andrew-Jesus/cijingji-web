@@ -19,11 +19,23 @@
  *   3. **进度不在这里另算一遍。** 今日进度统一用 `countDoneInPlan`（与首页同一个函数），
  *      否则会出现"学完 20 个回到首页显示 18/20"这种最伤信任的 bug。
  *
- * ── 一个刻意的取舍：**答完才去取例句** ─────────────────────────
- * 不是在卡片一出现就预取。原因：预取等于"用户还没答就先花一次 AI 的钱"，
- * 而答对答错都得给例句，一天 20 个词就是 20 次调用。放在"揭示答案"这一刻取，
- * 既省掉了翻页跳过的浪费，又正好用等待时间制造"它在为我写一句"的期待感。
+ * ── 例句怎么取：**提前写 + 稳定的一拍**（2026-09-25 改）─────────
+ * 早先是"答完才去叫 AI"，用户要盯着空位等 1.5~2.5 秒 —— 而那正好是他最想往下走的一刻，
+ * 节奏就断在这儿。现在换成两件事配合：
+ *
+ *   ① **提前写（prefetch）**：用户一翻到新卡（按下评分、或刚进页面）就在后台把这张卡的
+ *      例句生成好、写进本地缓存。他**读题答题的那几秒，正是 AI 写字的时间**。
+ *      等答完提交，句子通常已经躺在缓存里 —— 感知等待接近 0。
+ *      代价：用户中途退出时，手上那一张会白花一次调用（约 ¥0.001）。这是**刻意接受**的：
+ *      用一厘钱换掉每次翻页的停顿，很划算。
+ *      注意它只写缓存、**不碰任何界面状态**，所以不会闪、不会弹提示。
+ *
+ *   ② **稳定的一拍**：即使缓存命中（0 毫秒），也走完 `EXAMPLE_MIN_SHOW_MS` 的
+ *      "正在为你写"过场再呈现。快的不会一闪而过显得敷衍，慢的也不会突然卡住 ——
+ *      用户感受到的是**同一个节拍**，而不是忽快忽慢的抽奖。
+ *
  * （第二次遇到同一个词直接读本地缓存，不再调用。）
+ * （"演"仅限于**节奏**；"AI 到底写没写"一律如实标注，见下面 isAiGenerated 的分支。）
  */
 
 import { useParams, useRouter } from "next/navigation";
@@ -51,6 +63,7 @@ import { GENERIC_INTEREST_TAG, interestLabel } from "@/lib/onboarding/questions"
 import { doneWordIdsToday } from "@/lib/plan/todayProgress";
 import { assembleTodayPlan, scopeLabelOf } from "@/lib/plan/todayPlan";
 import { buildKnownLemmaSet, buildStudyCards } from "@/lib/study/cards";
+import { examplePacingDelayMs } from "@/lib/study/examplePacing";
 import { errorTypeLabel, gradeAnswer } from "@/lib/study/grade";
 import { MNEMONIC_TRIGGER_LABEL, mnemonicFor } from "@/lib/study/mnemonic";
 import { RATING_FOOTNOTE, RATING_OPTIONS, defaultRating, ratingHint } from "@/lib/study/rating";
@@ -81,6 +94,21 @@ interface ExampleView {
   note: string | null;
   model: string | null;
 }
+
+/**
+ * 例句是**从哪儿来的** —— 只用来决定"该不该弹一条提示、弹哪条"。
+ * 界面上的标注文案**不认它**，只认 `ExampleView.isAiGenerated`。
+ * 两者故意分开：一个是来源分类，一个是给用户看的诚实声明。
+ */
+type ExampleOrigin = "cache" | "ai" | "degraded" | "template";
+
+interface ExampleResult {
+  view: ExampleView;
+  origin: ExampleOrigin;
+}
+
+/* 例句的最短演出时长与"还要再等多久"，都在 `lib/study/examplePacing.ts`。
+   挪出去是因为它属于**产品决策**（一条带测试的纯函数），不该埋在这个大组件里。 */
 
 interface SessionData {
   sessionId: string;
@@ -113,6 +141,15 @@ type Phase = "loading" | "error" | "studying" | "finished";
  */
 function nowMs(): number {
   return Date.now();
+}
+
+/**
+ * 等一下。**只用于"把例句过场补足到最短时长"**，不是重试退避，别拿它去做别的。
+ * 客户端不 import 服务端那份 `sleep`：那是 AI 网关的退避节奏，
+ * 这里纯粹是界面节拍，分开两边都更好读。
+ */
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export default function StudyPage() {
@@ -289,11 +326,20 @@ export default function StudyPage() {
 
   // ------------------------------------------------------------------ 例句
 
-  const loadExample = useCallback(
-    async (target: StudyCard, interestTag: string) => {
-      setExampleLoading(true);
-      setExample(null);
+  /** 在途的展示序号。翻页/重来时递增，让晚到的那次自己作废（否则会串台词）。 */
+  const exampleSeqRef = useRef(0);
 
+  /** 已经提前写过（或正在写）的 "wordId|interestTag" —— 避免同一次会话里重复发请求 */
+  const prefetchedRef = useRef<Set<string>>(new Set());
+
+  /**
+   * 取例句的**数据部分**：查缓存 → 调 AI → 落缓存 / 记账。
+   *
+   * 刻意**不碰任何界面状态** —— 这样"提前写"和"正式展示"用的是同一段代码，
+   * 不会出现两套逻辑各自漂移（那种 bug 最难查：后台明明写对了，前台却还是旧的）。
+   */
+  const resolveExample = useCallback(
+    async (target: StudyCard, interestTag: string): Promise<ExampleResult> => {
       const facts = {
         lemma: target.lemma,
         phonetic: target.phonetic_uk,
@@ -301,18 +347,21 @@ export default function StudyPage() {
         meaning_zh: target.meaning_zh ?? "",
       };
 
-      // ① 本地缓存先行 —— `(word_id, interest_tag)` 命中就不再花这笔钱
+      // ① 本地缓存先行 —— `(word_id, interest_tag)` 命中就不再花这笔钱。
+      //    **"提前写"能生效全靠这一步**：后台写进去，前台在这里读到。
       try {
         const cached = await findCachedExample(target.word_id, interestTag);
         if (cached) {
-          setExample({
-            sentence: cached.sentence,
-            gloss: cached.gloss,
-            isAiGenerated: cached.is_ai_generated,
-            note: null,
-            model: null,
-          });
-          return;
+          return {
+            view: {
+              sentence: cached.sentence,
+              gloss: cached.gloss,
+              isAiGenerated: cached.is_ai_generated,
+              note: null,
+              model: null,
+            },
+            origin: "cache",
+          };
         }
       } catch {
         // 缓存读失败不该拦住整条路：继续去请求，最差也是落到模板句
@@ -330,13 +379,15 @@ export default function StudyPage() {
 
         if (!data.ok) {
           // 服务端明确拒绝（比如本地词库里没这个词）—— 这不是网络问题，别混淆
-          setExample({
-            ...templateExample(facts, interestTag),
-            isAiGenerated: false,
-            note: `服务器没能给出例句：${data.message}`,
-            model: null,
-          });
-          return;
+          return {
+            view: {
+              ...templateExample(facts, interestTag),
+              isAiGenerated: false,
+              note: `服务器没能给出例句：${data.message}`,
+              model: null,
+            },
+            origin: "template",
+          };
         }
 
         // 记账与缓存写入都**不阻塞展示**：用户已经看到句子了，
@@ -351,43 +402,113 @@ export default function StudyPage() {
         }).catch(() => undefined);
         void recordAiUsage(data.usages, now).catch(() => undefined);
 
-        setExample({
-          sentence: data.payload.sentence,
-          gloss: data.payload.gloss,
-          isAiGenerated: data.is_ai_generated,
-          note: data.notes.length > 0 ? data.notes.join(" ") : null,
-          model: data.model,
-        });
-
-        if (data.source === "template") {
-          pushNotice({
-            key: "ai-example",
-            level: "warning",
-            title: "例句这次是通用示例",
-            detail: data.notes.join(" ") || "AI 这条路没走通，先给你一句通用的。",
-          });
-        } else if (!data.degraded) {
-          pushNotice({
-            key: "ai-example-ok",
-            level: "success",
-            title: "例句已按你的兴趣写好",
-            detail: data.model ? `${data.model} · 结合「${interestLabel(interestTag)}」` : undefined,
-          });
-        }
+        return {
+          view: {
+            sentence: data.payload.sentence,
+            gloss: data.payload.gloss,
+            isAiGenerated: data.is_ai_generated,
+            note: data.notes.length > 0 ? data.notes.join(" ") : null,
+            model: data.model,
+          },
+          // 三种来源分开记，只影响"弹不弹提示"：降级到兜底模型仍算 AI 写的，
+          // 不该给用户弹"这是通用示例"那种吓人的话（文案必须和事实对上）。
+          origin: data.source === "template" ? "template" : data.degraded ? "degraded" : "ai",
+        };
       } catch {
         // ③ 连不上（断网 / 服务端没起来）→ 客户端自己拼一句，并如实说是通用示例。
         // 这一档保证「断网也能练」这条验收项成立。
-        setExample({
-          ...templateExample(facts, interestTag),
-          isAiGenerated: false,
-          note: fallbackNote("network"),
-          model: null,
-        });
-      } finally {
-        setExampleLoading(false);
+        return {
+          view: {
+            ...templateExample(facts, interestTag),
+            isAiGenerated: false,
+            note: fallbackNote("network"),
+            model: null,
+          },
+          origin: "template",
+        };
       }
     },
     [],
+  );
+
+  /**
+   * **提前写**：在用户还没走到这张卡时，就把它的例句生成好、写进缓存。
+   *
+   * 全程静默 —— 不改界面、不弹提示。失败了也不吭声：等用户真走到这张卡，
+   * `loadExample` 会自己再兜一次（多花一厘钱，换"绝不空手"）。
+   */
+  const prefetchExample = useCallback(
+    async (target: StudyCard, interestTag: string) => {
+      const key = `${target.word_id}|${interestTag}`;
+      if (prefetchedRef.current.has(key)) return;
+      prefetchedRef.current.add(key);
+
+      try {
+        await resolveExample(target, interestTag);
+      } catch {
+        // 留个口子：这次没写成，下次翻回来还能再试一遍
+        prefetchedRef.current.delete(key);
+      }
+    },
+    [resolveExample],
+  );
+
+  /**
+   * 首张卡的"提前写"。
+   *
+   * 为什么单独起一个 effect、而不是写在装载那一段里：装载那段在文件里更靠前，
+   * 而 `prefetchExample` 定义在后面 —— 直接引用会被判成"使用早于声明"。
+   * 门控（ref）保证它只在会话备好那一刻跑一次：`queue` 每次作答都会换新数组，
+   * 没有这道门就会反复触发（虽然内部有去重兜底，但没必要让它白跑）。
+   */
+  const firstPrefetchDoneRef = useRef(false);
+  useEffect(() => {
+    if (firstPrefetchDoneRef.current) return;
+    if (phase !== "studying" || !session || queue.length === 0) return;
+    firstPrefetchDoneRef.current = true;
+    void prefetchExample(queue[0].card, session.interestTag);
+  }, [phase, session, queue, prefetchExample]);
+
+  /** 正式展示：取例句 → **补足最短演出** → 呈现。 */
+  const loadExample = useCallback(
+    async (target: StudyCard, interestTag: string) => {
+      const seq = ++exampleSeqRef.current;
+      setExampleLoading(true);
+      setExample(null);
+
+      const startedAt = nowMs();
+      const { view, origin } = await resolveExample(target, interestTag);
+
+      // 稳定的一拍：缓存命中时这里只要几毫秒，补到最短演出时长再呈现。
+      // 打满这段是**故意的**，不是慢 —— 理由见文件头 ②；数值与断言在 examplePacing。
+      const elapsed = nowMs() - startedAt;
+      const pacingDelay = examplePacingDelayMs(elapsed);
+      if (pacingDelay > 0) await sleepMs(pacingDelay);
+
+      // 用户在等待期间翻页了：这一发已经过期，安静退场
+      // （否则上一张的句子会糊到下一张脸上 —— 这种串台词比多等一会儿糟得多）
+      if (seq !== exampleSeqRef.current) return;
+
+      setExample(view);
+      setExampleLoading(false);
+
+      if (origin === "template") {
+        pushNotice({
+          key: "ai-example",
+          level: "warning",
+          title: "例句这次是通用示例",
+          detail: view.note || "AI 这条路没走通，先给你一句通用的。",
+        });
+      } else if (origin === "ai") {
+        pushNotice({
+          key: "ai-example-ok",
+          level: "success",
+          title: "例句已按你的兴趣写好",
+          detail: view.model ? `${view.model} · 结合「${interestLabel(interestTag)}」` : undefined,
+        });
+      }
+    },
+    [resolveExample],
   );
 
   // ------------------------------------------------------------------ 作答
@@ -448,6 +569,12 @@ export default function StudyPage() {
     resetAnswer();
     cardShownAt.current = nowMs();
 
+    // 提前把**下一张**的例句写好：他接下来读题、答题的这几秒，
+    // 正好就是 AI 写字的时间。等答完提交，句子通常已经躺在缓存里了。
+    // （走完了就没有"下一张"，`upcoming` 自然是 undefined。）
+    const upcoming = moved.queue[moved.nextPos];
+    if (upcoming) void prefetchExample(upcoming.card, session.interestTag);
+
     if (session) {
       // 会话内的即时反馈：**并集**（进店时已练的 + 这次练的），分母恒为任务单长度。
       // 刻意不写 `已练 + 新增` 这种加法 —— 同一批词练两遍会被算成两个词，进度会虚高。
@@ -483,6 +610,9 @@ export default function StudyPage() {
     setGrade(null);
     setExample(null);
     setExampleLoading(false);
+    // 顺手让"还在路上"的那次展示作废：用户已经翻页了，
+    // 它的句子属于上一张卡，端上来就是错的。
+    exampleSeqRef.current += 1;
   }
 
   // ------------------------------------------------------------------ 渲染
@@ -823,7 +953,17 @@ function RevealView({
         </div>
 
         {exampleLoading && !example && (
-          <p className="text-tertiary mt-3 text-xs">正在按你选的兴趣写一句…</p>
+          <div className="mt-3 flex items-center gap-2">
+            {/* 三个小点依次呼吸。动效来自 .example-dot（只动 opacity/scale），
+                在「减少动态效果」偏好下会自动停住 —— 见 globals.css。
+                它只是让这 1 秒**看得出是在做事**，不代表进度，所以不写百分比。 */}
+            <span className="flex gap-1" aria-hidden="true">
+              <span className="example-dot bg-brand-400 size-1.5 rounded-full" />
+              <span className="example-dot bg-brand-400 size-1.5 rounded-full" />
+              <span className="example-dot bg-brand-400 size-1.5 rounded-full" />
+            </span>
+            <p className="text-tertiary text-xs">正在按你选的兴趣写一句…</p>
+          </div>
         )}
 
         {!exampleLoading && !example && (
@@ -831,7 +971,9 @@ function RevealView({
         )}
 
         {example && (
-          <>
+          // data-animated：句子"写好了"那一刻的入场（全项目唯一那条 rise-in）。
+          // 这个元素是从无到有挂载的，浏览器会自然播一次，不需要额外的 key。
+          <div data-animated>
             <p className="text-primary mt-3 text-sm leading-relaxed">{example.sentence}</p>
             <p className="text-secondary mt-1.5 text-xs leading-relaxed">{example.gloss}</p>
 
@@ -864,7 +1006,7 @@ function RevealView({
                 {copied ? "已复制，发给我就行" : "复制这句话的问题，发给我"}
               </button>
             )}
-          </>
+          </div>
         )}
       </div>
 
