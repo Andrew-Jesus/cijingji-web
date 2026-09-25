@@ -50,7 +50,13 @@ describe("templateExample / 兜底句", () => {
 });
 
 describe("fallbackNote / 降级原因要分得清", () => {
-  const reasons: FallbackReason[] = ["no_provider", "network", "model_failed", "unexpected"];
+  const reasons: FallbackReason[] = [
+    "no_provider",
+    "network",
+    "model_failed",
+    "too_slow",
+    "unexpected",
+  ];
 
   it("每种原因都有一句人话（空文案等于什么都没说）", () => {
     for (const r of reasons) {
@@ -58,9 +64,14 @@ describe("fallbackNote / 降级原因要分得清", () => {
     }
   });
 
-  it("四种原因的文案互不相同 —— 混在一起说等于没说，排查时也用不上", () => {
+  it("五种原因的文案互不相同 —— 混在一起说等于没说，排查时也用不上", () => {
     const texts = reasons.map(fallbackNote);
     expect(new Set(texts).size).toBe(reasons.length);
+  });
+
+  it("「太慢等超时」和「模型没写好」要分开说 —— 它们是两条不同的排查线索", () => {
+    expect(fallbackNote("too_slow")).not.toBe(fallbackNote("model_failed"));
+    expect(fallbackNote("too_slow")).toContain("慢");
   });
 
   it("「没配 Key」要说清是缺 Key，而不是含糊的“AI 不可用”", () => {

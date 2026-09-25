@@ -51,6 +51,29 @@ export function isRetryable(err: unknown): boolean {
   return true; // 未知异常，给一次机会
 }
 
+/**
+ * 撞限流（429）。
+ *
+ * 为什么单独认它：免费档**并发只有 1**，429 的常见成因不是"我们请求太多"，
+ * 而是"上一次还在跑"。所以它的对策和别的错误不一样 ——
+ * **优先换下一档**，换不了才退避重试（见 `retry.ts`）。
+ */
+export function isRateLimited(err: unknown): boolean {
+  return err instanceof ProviderError && err.kind === "http" && err.status === 429;
+}
+
+/**
+ * 这一档"账号本身有问题"的失败：Key 不对（401/403）、余额不足（402）。
+ *
+ * 判它的目的只有一个：**给这一档打个冷却标记**。
+ * 实测里 DeepSeek 是余额不足，但它每次请求都先被试一遍、白等一轮才轮到兜底 ——
+ * 这类失败在几分钟内重试一百次结果完全一样，唯一的正解是**先别试它**。
+ */
+export function isFatalProviderConfig(err: unknown): boolean {
+  if (!(err instanceof ProviderError) || err.kind !== "http" || err.status === null) return false;
+  return err.status === 401 || err.status === 402 || err.status === 403;
+}
+
 function asRecord(v: unknown): Record<string, unknown> | null {
   return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null;
 }

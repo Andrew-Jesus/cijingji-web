@@ -44,10 +44,10 @@ export function templateExample(facts: WordFacts, interestTag: string): Template
 /**
  * 界面上那句如实标注（按场景不同而不同）。
  *
- * 分开的原因：**"没配 Key"和"网络断了"和"模型抽风了"是三件不同的事**，
+ * 分开的原因：**"没配 Key"和"网络断了"和"模型抽风了"和"太慢等超时了"是四件不同的事**，
  * 对用户和对我的排查价值完全不同。笼统写一句"AI 不可用"等于什么都没说。
  */
-export type FallbackReason = "no_provider" | "network" | "model_failed" | "unexpected";
+export type FallbackReason = "no_provider" | "network" | "model_failed" | "too_slow" | "unexpected";
 
 export function fallbackNote(reason: FallbackReason): string {
   switch (reason) {
@@ -57,6 +57,8 @@ export function fallbackNote(reason: FallbackReason): string {
       return "现在连不上 AI（可能是断网），先给你一句通用示例 —— 断网不影响练词。";
     case "model_failed":
       return "AI 这次没写出合格的句子（连着两档都没成），先给你一句通用示例，下次会重试。";
+    case "too_slow":
+      return "AI 这次回得太慢，等它不如先练词 —— 先给你一句通用示例，下次会重试。";
     default:
       return "AI 这条路出了点意外，先给你一句通用示例。";
   }
