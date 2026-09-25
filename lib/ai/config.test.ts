@@ -148,13 +148,15 @@ describe("resolveTimeoutMsFor / 超时按档算（免费档不再被拖满 12 �
     expect(resolveTimeoutMsFor("deepseek", env)).toBe(DEFAULT_TIMEOUT_MS);
   });
 
-  it("全局总开关一改全改 —— **包括免费档**（设了不生效比没有开关更让人困惑）", () => {
+  it("`AI_TIMEOUT_MS` 只管付费档 —— 免费档的 4 秒**不许被它抬回去**", () => {
     const env = { AI_TIMEOUT_MS: "6000" };
-    expect(resolveTimeoutMsFor("glm", env)).toBe(6000);
     expect(resolveTimeoutMsFor("deepseek", env)).toBe(6000);
+    // 回归钉子：旧环境里普遍填着 AI_TIMEOUT_MS=12000（旧版样例把它当必填）。
+    // 一旦让它覆盖免费档，"免费档不再白等 12 秒"这个修复就被一条旧配置悄悄抵消 —— 且不报错。
+    expect(resolveTimeoutMsFor("glm", env)).toBe(FREE_TIMEOUT_MS);
   });
 
-  it("优先级：单档专设 > 全局总开关", () => {
+  it("优先级：单档专设 > 一切默认（要给免费档改超时，只能用 AI_TIMEOUT_GLM_MS）", () => {
     expect(
       resolveTimeoutMsFor("glm", { AI_TIMEOUT_MS: "6000", AI_TIMEOUT_GLM_MS: "8000" }),
     ).toBe(8000);
@@ -194,11 +196,33 @@ describe("resolveTotalBudgetMs / 整条链的总预算", () => {
     expect(resolveTotalBudgetMs({ AI_TIMEOUT_MS: "30000" })).toBe(30_000);
   });
 
-  it("某档被**单独**设了更长的超时，预算要跟着抬 —— 否则那一档直接被预算砍掉", () => {
-    // 只给 GLM 设 30 秒：预算若还按 5 秒算，这一档永远开不出来
-    expect(resolveTotalBudgetMs({ AI_TOTAL_BUDGET_MS: "5000", AI_TIMEOUT_GLM_MS: "30000" })).toBe(
-      30_000,
-    );
+  it("第一档被设了更长的超时，预算要跟着抬 —— 否则那一档直接被预算砍掉", () => {
+    // 只配 GLM（它就是第一档）并给它 30 秒：预算若还按 5 秒算，它永远开不出来
+    expect(
+      resolveTotalBudgetMs({
+        GLM_API_KEY: "g",
+        AI_TOTAL_BUDGET_MS: "5000",
+        AI_TIMEOUT_GLM_MS: "30000",
+      }),
+    ).toBe(30_000);
+  });
+
+  it("底线只认**第一档** —— 第二档被单独设长，不该把全局等待一起顶上去", () => {
+    // GLM 排在第二：它被截断是设计内的（截断就落模板句），
+    // 不能因为"给第二档设了 30 秒"就让每个请求都可能多等 30 秒。
+    expect(
+      resolveTotalBudgetMs({
+        DEEPSEEK_API_KEY: "d",
+        GLM_API_KEY: "g",
+        AI_TOTAL_BUDGET_MS: "20000",
+        AI_TIMEOUT_GLM_MS: "30000",
+      }),
+    ).toBe(20_000);
+  });
+
+  it("一档都没配 Key 时，底线退回「这个档位登记的第一家」的默认超时", () => {
+    // 开发机上没 Key，但"我把默认超时调长了、预算得跟着抬"这条直觉仍然要成立
+    expect(resolveTotalBudgetMs({ AI_TIMEOUT_MS: "30000" })).toBe(30_000);
   });
 
   it("乱填回落默认，且上限封在 120 秒", () => {

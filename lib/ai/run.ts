@@ -144,7 +144,9 @@ function failedUsageDraft(task: AiTaskId, spec: ModelSpec, latency: number): AiU
 export async function generateExample(input: GenerateExampleInput): Promise<GenerateExampleOutput> {
   const task: AiTaskId = input.task ?? "example_personalized";
   const now = input.now ?? new Date();
-  const budgetMs = resolveTotalBudgetMs(input.env);
+  // 预算的底线跟着**这条任务所在的档位**算 —— 不同档位的第一家可能不同，
+  // 不能拿一个写死的数当"第一档超时"。
+  const budgetMs = resolveTotalBudgetMs(input.env, AI_TASK_TIER[task]);
   const backoffBase = resolveRetryBackoffMs(input.env);
   const cooldownMs = resolveCooldownMs(input.env);
   const chain = resolveModelChainForTask(task, input.env);

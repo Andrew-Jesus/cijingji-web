@@ -300,50 +300,57 @@ function readPositiveInt(raw: string | undefined, fallback: number, max: number)
 }
 
 /**
- * **全局总开关**：`AI_TIMEOUT_MS`，没设时回落付费档的默认值。
- * 它是"所有档一律用这个超时"的意思，日常不用动 —— 逐档的超时请走 `resolveTimeoutMsFor`。
+ * **付费档**的默认超时（也是 `AI_TIMEOUT_MS` 的读法）。
+ * 名字里的"全局"是历史遗留 —— 那时还没有"免费档特殊待遇"。
+ * 现在它**只管付费档**，理由见 `resolveTimeoutMsFor`。
  */
 export function resolveTimeoutMs(env: EnvLike = process.env): number {
   return readPositiveInt(readEnv(env, "AI_TIMEOUT_MS"), DEFAULT_TIMEOUT_MS, TIMEOUT_CAP_MS);
 }
 
 /**
- * 某一档的**单次请求超时**。三级优先，从高到低：
+ * 某一档的**单次请求超时**。两级优先，从高到低：
  *   ① `AI_TIMEOUT_<档名>_MS`（只改这一档，如 `AI_TIMEOUT_GLM_MS`）
- *   ② `AI_TIMEOUT_MS`（全局总开关，一改全改）
- *   ③ 内置默认：免费档 `FREE_TIMEOUT_MS`（短）、付费档 `DEFAULT_TIMEOUT_MS`
+ *   ② 内置默认：**免费档 `FREE_TIMEOUT_MS`（4 秒，不跟 `AI_TIMEOUT_MS` 走）**、
+ *      付费档 `AI_TIMEOUT_MS`（不填则 12 秒）
  *
- * ③ 里免费档拿短默认这件事，就是"GLM 卡住时要白等 12 秒"那个毛病的解药。
- * 但**总开关一旦被显式设过，就一律听总开关** —— 否则用户设了 `AI_TIMEOUT_MS=30000`
- * 却发现免费档还是 4 秒，那种"设了不生效"比没有开关更让人困惑。
+ * ⚠️ **免费档为什么不跟 `AI_TIMEOUT_MS` 走（这里踩过一次）**：
+ * `AI_TIMEOUT_MS` 这个名字比"免费档特殊待遇"出现得早，很多环境里**已经填着 12000**
+ * （旧版 `.env.example` 就是把它当必填样例发出去的）。
+ * 如果让它覆盖免费档，就等于"今天修好的毛病，被一条早就存在的旧配置悄悄改回去"——
+ * **而且不报任何错**，只表现为"AI 又老是要等很久"。这类"配置悄悄抵消修复"是最难查的一种。
+ * → 所以免费档**自带短默认且不受全局量影响**；真要改它，就用 `AI_TIMEOUT_GLM_MS` 明说。
  */
 export function resolveTimeoutMsFor(id: ProviderId, env: EnvLike = process.env): number {
   const perProvider = readPositiveInt(readEnv(env, PROVIDERS[id].timeoutEnv), 0, TIMEOUT_CAP_MS);
   if (perProvider > 0) return perProvider;
 
-  const globalSet = readEnv(env, "AI_TIMEOUT_MS") !== undefined;
-  if (PROVIDERS[id].free && !globalSet) return FREE_TIMEOUT_MS;
+  if (PROVIDERS[id].free) return FREE_TIMEOUT_MS;
 
   return resolveTimeoutMs(env);
 }
 
 /**
- * 整条链的总预算。**不得小于"最长的那个单档超时"** —— 否则第一档都开不了。
+ * 整条链的总预算。**不得小于"这条链第一档的超时"** —— 否则第一档都开不了。
  *
- * 注意分母是**按档算出来的最大超时**，不是一个全局常数：
- * 曾经这里只比 `AI_TIMEOUT_MS`，于是"给免费档单独设了 8 秒"时预算没跟着抬，
- * 第一档直接被预算砍掉 —— 属于那种不报错、只是"AI 老是不出句子"的隐蔽故障。
+ * 底线为什么只取**第一档**、不取"所有档里最大的那个"：
+ * 预算的职责是保证**第一档开得出来**，后面的档位被预算截断是设计内的
+ * （截断了就落模板句，这正是"宁可降级也不让用户干等"）。
+ * 反过来若按"最大"取底线，就会出现"某档被单独设了 30 秒 → 全局预算被顶到 30 秒 →
+ * 用户实际要多等十几秒"这种**配置互相牵连**的效果，很难解释。
+ *
+ * 一档都没配 Key 时（开发机），退回看**这个档位登记的第一家**的默认超时 ——
+ * 这样"我把默认超时调长了，预算得跟着抬"这条直觉仍然成立。
  */
-export function resolveTotalBudgetMs(env: EnvLike = process.env): number {
+export function resolveTotalBudgetMs(env: EnvLike = process.env, tier: AiTaskTier = "cheap"): number {
   const budget = readPositiveInt(
     readEnv(env, "AI_TOTAL_BUDGET_MS"),
     DEFAULT_TOTAL_BUDGET_MS,
     120_000,
   );
-  const longestSingle = Math.max(
-    ...(Object.keys(PROVIDERS) as ProviderId[]).map((id) => resolveTimeoutMsFor(id, env)),
-  );
-  return Math.max(budget, longestSingle);
+  const chain = resolveModelChain(tier, env);
+  const firstId = chain[0]?.provider ?? TIER_ORDER[tier][0];
+  return Math.max(budget, resolveTimeoutMsFor(firstId, env));
 }
 
 export function resolveRetryBackoffMs(env: EnvLike = process.env): number {
