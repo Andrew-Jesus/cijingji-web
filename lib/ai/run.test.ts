@@ -27,7 +27,7 @@ const facts: WordFacts = {
 /** 闲时时刻，避开高峰计价，让成本断言稳定 */
 const OFF_PEAK = new Date("2026-09-25T00:00:00Z");
 
-/** 两家都配：这是线上真实的样子，也是"分档"唯一能看出效果的前提 */
+/** 两家都配：这是线上真实的样子，也是"顺序"唯一能看出效果的前提 */
 const BOTH: EnvLike = { DEEPSEEK_API_KEY: "d", GLM_API_KEY: "g" };
 
 const GOOD = JSON.stringify({
@@ -98,55 +98,55 @@ async function run(
   return { out, calls, waits, cooldown };
 }
 
-describe("分档路由：例句先走免费档", () => {
-  it("首选是免费的 GLM；它写出来就不算降级（它本来就是这一档的正主）", async () => {
+describe("链路顺序：例句先走 DeepSeek", () => {
+  it("首选是 DeepSeek；它写出来就不算降级（它本来就是这条链的正主）", async () => {
     const { out, calls } = await run([{ kind: "ok" }]);
 
-    expect(calls.map((c) => c.provider)).toEqual(["glm"]);
+    expect(calls.map((c) => c.provider)).toEqual(["deepseek"]);
     expect(out.source).toBe("ai");
-    expect(out.model).toBe("glm-4.7-flash");
+    expect(out.model).toBe("deepseek-flash");
     expect(out.degraded).toBe(false);
     expect(out.notes).toEqual([]);
   });
 
-  it("免费档写了但格式不合格 → 同一档立刻再问一次（不退避，因为它刚正常回过话）", async () => {
+  it("首选档写了但格式不合格 → 同一档立刻再问一次（不退避，因为它刚正常回过话）", async () => {
     const { out, calls, waits } = await run([{ kind: "ok", text: "这不是 JSON" }, { kind: "ok" }]);
 
-    expect(calls.map((c) => c.provider)).toEqual(["glm", "glm"]);
+    expect(calls.map((c) => c.provider)).toEqual(["deepseek", "deepseek"]);
     expect(waits).toEqual([]);
     expect(out.source).toBe("ai");
-    expect(out.model).toBe("glm-4.7-flash");
+    expect(out.model).toBe("deepseek-flash");
   });
 
-  it("免费档挂了 → 付费的垫底顶上，并如实标成降级", async () => {
+  it("首选档挂了 → 兜底的 GLM 顶上，并如实标成降级", async () => {
     const { out, calls } = await run([
       { kind: "err", err: http(500) },
       { kind: "err", err: http(500) },
       { kind: "ok" },
     ]);
 
-    expect(calls.map((c) => c.provider)).toEqual(["glm", "glm", "deepseek"]);
-    expect(out.model).toBe("deepseek-flash");
+    expect(calls.map((c) => c.provider)).toEqual(["deepseek", "deepseek", "glm"]);
+    expect(out.model).toBe("glm-4.7-flash");
     expect(out.degraded).toBe(true);
     expect(out.notes[0]).toContain("首选档没成");
   });
 });
 
-describe("退避重试：那个「GLM 每次都失败」的坑", () => {
+describe("退避重试：那个「兜底档每次都失败」的坑", () => {
   it("超时之后**先等再试**（不等就是自己撞上还在跑的上一次 → 429）", async () => {
     const { out, calls, waits } = await run([{ kind: "err", err: timeout() }, { kind: "ok" }]);
 
-    expect(calls.map((c) => c.provider)).toEqual(["glm", "glm"]);
+    expect(calls.map((c) => c.provider)).toEqual(["deepseek", "deepseek"]);
     expect(waits).toEqual([DEFAULT_RETRY_BACKOFF_MS]);
-    expect(out.model).toBe("glm-4.7-flash");
+    expect(out.model).toBe("deepseek-flash");
   });
 
   it("撞限流（429）时还有别的档 → 直接换档，不在同一档上硬碰", async () => {
     const { out, calls, waits } = await run([{ kind: "err", err: http(429) }, { kind: "ok" }]);
 
-    expect(calls.map((c) => c.provider)).toEqual(["glm", "deepseek"]);
+    expect(calls.map((c) => c.provider)).toEqual(["deepseek", "glm"]);
     expect(waits).toEqual([]); // 换档不需要等
-    expect(out.model).toBe("deepseek-flash");
+    expect(out.model).toBe("glm-4.7-flash");
   });
 
   it("已经是最后一档还撞限流 → 退避后再试一次（总不能把这一句直接丢了）", async () => {
@@ -167,7 +167,7 @@ describe("退避重试：那个「GLM 每次都失败」的坑", () => {
       { kind: "err", err: http(500) },
     ]);
 
-    expect(calls.map((c) => c.provider)).toEqual(["glm", "glm", "deepseek", "deepseek"]);
+    expect(calls.map((c) => c.provider)).toEqual(["deepseek", "deepseek", "glm", "glm"]);
   });
 });
 
@@ -179,15 +179,15 @@ describe("冷却：别在已经死掉的档上白等", () => {
     ]);
 
     // 402 不重试：两档各试一次就够，不该有第三次
-    expect(calls.map((c) => c.provider)).toEqual(["glm", "deepseek"]);
-    expect(cooldown.until("glm")).toBe(DEFAULT_COOLDOWN_MS);
-    expect(cooldown.isCooling("glm", 0)).toBe(true);
+    expect(calls.map((c) => c.provider)).toEqual(["deepseek", "glm"]);
+    expect(cooldown.until("deepseek")).toBe(DEFAULT_COOLDOWN_MS);
     expect(cooldown.isCooling("deepseek", 0)).toBe(true);
+    expect(cooldown.isCooling("glm", 0)).toBe(true);
   });
 
   it("被冻住的档**连试都不试**，直接跳到下一档（省掉一次白等）", async () => {
     const cooldown = createCooldownStore();
-    // 第一次：GLM 余额不足（被冻），DeepSeek 只是临时故障（不该被冻）
+    // 第一次：DeepSeek 余额不足（被冻），GLM 只是临时故障（不该被冻）
     await run(
       [
         { kind: "err", err: http(402) },
@@ -196,13 +196,13 @@ describe("冷却：别在已经死掉的档上白等", () => {
       ],
       { cooldown },
     );
-    expect(cooldown.isCooling("glm", 0)).toBe(true);
-    expect(cooldown.isCooling("deepseek", 0)).toBe(false);
+    expect(cooldown.isCooling("deepseek", 0)).toBe(true);
+    expect(cooldown.isCooling("glm", 0)).toBe(false);
 
     const second = await run([{ kind: "ok" }], { cooldown });
 
-    expect(second.calls.map((c) => c.provider)).toEqual(["deepseek"]);
-    expect(second.out.model).toBe("deepseek-flash");
+    expect(second.calls.map((c) => c.provider)).toEqual(["glm"]);
+    expect(second.out.model).toBe("glm-4.7-flash");
     expect(second.out.attempts[0].error).toContain("冷却中");
   });
 
@@ -214,7 +214,7 @@ describe("冷却：别在已经死掉的档上白等", () => {
 
     expect(second.calls).toHaveLength(1);
     expect(second.out.usages).toHaveLength(1);
-    expect(second.out.usages[0].model).toBe("deepseek-flash");
+    expect(second.out.usages[0].model).toBe("glm-4.7-flash");
   });
 });
 
@@ -253,12 +253,12 @@ describe("记账与兜底", () => {
     const { out } = await run([{ kind: "err", err: http(402) }, { kind: "ok" }]);
 
     expect(out.usages).toHaveLength(2);
-    expect(out.usages[0]).toMatchObject({ model: "glm-4.7-flash", input_tokens: 0, ok: false });
-    expect(out.usages[1]).toMatchObject({ model: "deepseek-flash", input_tokens: 100, ok: true });
+    expect(out.usages[0]).toMatchObject({ model: "deepseek-flash", input_tokens: 0, ok: false });
+    expect(out.usages[1]).toMatchObject({ model: "glm-4.7-flash", input_tokens: 100, ok: true });
   });
 
   it("免费的 GLM 记成 0 元，但标记为**已计价**（0 元是真免费，不是「没查到价」）", async () => {
-    const { out } = await run([{ kind: "ok" }]);
+    const { out } = await run([{ kind: "ok" }], { env: { GLM_API_KEY: "g" } });
 
     expect(out.usages[0].cost_cny).toBe(0);
     expect(out.usages[0].priced).toBe(true);

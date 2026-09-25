@@ -8,18 +8,18 @@
  *   · 「AI 边界」这条产品规矩要靠它守 —— 词表/音标/义项这些**查出来的东西**
  *     绝不能被模型改写，而换个模型就悄悄改变事实的风险，正是从"到处写模型名"开始的。
  *
- * ── 分档路由（2026-09-25 定案）────────────────────────────────
- * 不是一个固定的"主 → 兜底"，而是**按任务分量分档**：
+ * ── 顺序：DeepSeek 打头（2026-09-25 定案）────────────────────
+ * **所有任务一律 DeepSeek 打头，GLM 退到兜底。**
  *
- *   · `cheap` 档 —— 例句这种"短、量大、写不好也不致命"的活：
- *     **智谱 GLM 免费档打头，DeepSeek 垫底**。
- *     理由：这类活 GLM 完全够用，先走免费的能把 DeepSeek 的调用量压下来（省钱），
- *     付费的退到后面当保险。
- *   · `standard` 档 —— 归因、计划这类"要动脑子"的活：
- *     **DeepSeek 打头，GLM 兜底**。
+ * 中途试过反过来的方案：例句这种轻活排 GLM 免费档打头，想省下 DeepSeek 的调用量。
+ * 当天线上连打 4 发就把它推翻了 —— 免费档**并发只有 1**，工作日白天几乎必挂，
+ * 于是"省下的钱"变成"每次请求都先白等一轮失败"，还常常一路掉到模板句。
+ * 单价测算也站在 DeepSeek 这边：一句例句约 0.0024 元，¥10 够写 4000 句。
+ * → **稳定优先，不为了省这点钱牺牲可用性。**
  *
- * 哪一档排谁在前，**只写在本文件的两张表里**（`TIER_ORDER` 与 `AI_TASK_TIER`）。
- * 想加第三家：往 `PROVIDERS` 加一项 + 在 `TIER_ORDER` 里排个位置，业务代码一行不用动。
+ * 档位（`cheap` / `standard`）这个机制**保留备用**：它是"谁排前面"的唯一落点 ——
+ * 将来要给某一类活单独换顺序、给免费档单独设更短超时、或加第三家，
+ * 都只改本文件这两张表（`TIER_ORDER` / `AI_TASK_TIER`），业务代码一行不用动。
  *
  * ── Key 的边界（硬约束，踩过坑）──────────────────────────────
  * 这个文件只在**服务端**被 import（`app/api/ai/route.ts` 那条链路）。
@@ -76,9 +76,10 @@ export interface ProviderDef {
  * 模型名的来历：
  *   · DeepSeek 在 2026 年 9 月把 Flash 的规范名换成了 `deepseek-flash`，
  *     旧名 `deepseek-v4-flash` 仍被接受（同名模型承接、按 Flash 价计费）。
- *   · 智谱 `glm-4.7-flash` 长期免费，但**并发 1**。真要提稳定性，
- *     把 `AI_MODEL_GLM` 换成 `glm-4.7-flashX`（同模型、解除并发限制、单价极低）即可，
+ *   · 智谱 `glm-4.7-flash` 长期免费，但**并发 1**，高峰期会被挤掉。想换成付费的稳定档，
+ *     把 `AI_MODEL_GLM` 改成 `glm-5.3-flash` 即可（0.8 / 2.8 元每百万 token，限时五折），
  *     一行环境变量的事，代码不用改。
+ *     ⚠️ 别用 `glm-4.7-flashX` —— 那是国际站（Z.ai）的型号，国内站价格页上根本没有这个。
  */
 export const PROVIDERS: Record<ProviderId, ProviderDef> = {
   deepseek: {
@@ -109,13 +110,20 @@ export const PROVIDERS: Record<ProviderId, ProviderDef> = {
  * 改这张表 = 改掉整个产品的成本结构与质量上限，请连着 `cost.ts` 一起看。
  */
 export const TIER_ORDER: Record<AiTaskTier, readonly ProviderId[]> = {
-  // 例句：GLM 免费档打头（够用 + 不要钱），DeepSeek 垫底当保险
-  cheap: ["glm", "deepseek"],
-  // 需要动脑子的活：DeepSeek 打头，GLM 兜底
+  // 轻活（例句）：同样 DeepSeek 打头 —— 拿免费档当首选会拖慢每一次请求，理由见文件头
+  cheap: ["deepseek", "glm"],
+  // 要动脑子的活：DeepSeek 打头，GLM 兜底
   standard: ["deepseek", "glm"],
 };
 
-/** 任务 → 档位。**新增任务必须在这里落一次户**，否则拿不到档位 */
+/**
+ * 任务 → 档位。**新增任务必须在这里落一次户**，否则拿不到档位。
+ *
+ * 目前两档的**顺序是相同的**（都 DeepSeek 打头），差别只在语义标注上。
+ * 仍然按"活儿的轻重"分开登记，是为了将来能一类一类地调 ——
+ * 比如哪天要让例句回落免费档、或给归因这类活换更强的模型，
+ * 改 `TIER_ORDER` 一行就行，不必动任务归属。
+ */
 export const AI_TASK_TIER: Record<AiTaskId, AiTaskTier> = {
   example_personalized: "cheap",
 };

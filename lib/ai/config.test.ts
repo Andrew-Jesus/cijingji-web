@@ -21,10 +21,10 @@ import {
 } from "./config";
 
 /**
- * 这些测试钉住的是**降级链的形状与分档规则**，不是具体是哪家模型：
+ * 这些测试钉住的是**降级链的形状与顺序规则**，不是具体是哪家模型：
  * 换供应商、换模型名都不该让它们变红，但下面两条必须一直是绿的 ——
  *   ① "缺 Key 应该跳过而不是抛错"；
- *   ② "例句这种轻活走免费档打头"（2026-09-25 的成本决策，别被悄悄改回去）。
+ *   ② "DeepSeek 打头、GLM 兜底"（2026-09-25 的可用性决策，别被悄悄改回去）。
  */
 describe("resolveModelChain / 缺 Key 就跳过，不抛错", () => {
   it("一个 Key 都没配 → 空链（开发机上不配 Key 也该能跑通全流程）", () => {
@@ -57,10 +57,10 @@ describe("resolveModelChain / 缺 Key 就跳过，不抛错", () => {
   it("模型名与端点可以由环境变量覆盖（代码里不写死模型名）", () => {
     const chain = resolveModelChain("cheap", {
       GLM_API_KEY: "g",
-      AI_MODEL_GLM: "glm-4.7-flashX",
+      AI_MODEL_GLM: "glm-5.3-flash",
       AI_BASE_GLM: "https://example.com/v1/",
     });
-    expect(chain[0].model).toBe("glm-4.7-flashX");
+    expect(chain[0].model).toBe("glm-5.3-flash");
     // 末尾斜杠要去掉，否则拼出来是 //chat/completions
     expect(chain[0].baseUrl).toBe("https://example.com/v1");
   });
@@ -72,26 +72,24 @@ describe("resolveModelChain / 缺 Key 就跳过，不抛错", () => {
   });
 });
 
-describe("分档路由 / 谁排前面是产品决策，必须钉住", () => {
+describe("顺序 / 谁排前面是产品决策，必须钉住", () => {
   const both = { DEEPSEEK_API_KEY: "d", GLM_API_KEY: "g" };
 
-  it("cheap 档：**免费档打头，付费的垫底**（例句就属于这一档）", () => {
-    expect(resolveModelChain("cheap", both).map((c) => c.provider)).toEqual(["glm", "deepseek"]);
+  it("两档都是 **DeepSeek 打头、GLM 兜底** —— 免费档当首选会拖慢每一次请求", () => {
+    expect(resolveModelChain("cheap", both).map((c) => c.provider)).toEqual(["deepseek", "glm"]);
+    expect(resolveModelChain("standard", both).map((c) => c.provider)).toEqual(["deepseek", "glm"]);
   });
 
-  it("standard 档：付费的 DeepSeek 打头，GLM 兜底", () => {
-    expect(resolveModelChain("standard", both).map((c) => c.provider)).toEqual([
-      "deepseek",
-      "glm",
-    ]);
-  });
-
-  it("例句任务落在 cheap 档 —— 这条挂了就说明成本结构被改动了，先来看这张表再改测试", () => {
+  it("例句任务走 DeepSeek 优先 —— 这条挂了说明顺序被改动了，先来看这张表再改测试", () => {
     expect(AI_TASK_TIER.example_personalized).toBe("cheap");
     expect(resolveModelChainForTask("example_personalized", both).map((c) => c.provider)).toEqual([
-      "glm",
       "deepseek",
+      "glm",
     ]);
+  });
+
+  it("只用免费的 GLM 也排得进链（不因顺序变化被漏掉）", () => {
+    expect(resolveModelChain("cheap", { GLM_API_KEY: "g" }).map((c) => c.provider)).toEqual(["glm"]);
   });
 
   it("每个任务都有档位（新增任务忘了登记会在这里报错）", () => {
