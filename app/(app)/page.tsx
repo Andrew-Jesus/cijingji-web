@@ -28,6 +28,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
+import { SignOutLink } from "@/components/auth/SignOutLink";
 import { pushNotice, setTodayProgress } from "@/lib/console/store";
 import { db } from "@/lib/db/local";
 import { getProfile, isOnboarded } from "@/lib/db/repo";
@@ -195,13 +196,18 @@ export default function HomePage() {
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-5 pt-7 pb-20">
       <header className="mb-7 flex items-start justify-between gap-4">
         <h1 className="text-primary text-lg leading-none font-medium">词径记</h1>
-        <button
-          type="button"
-          onClick={() => router.push("/onboarding")}
-          className="text-tertiary -mt-1 -mr-2 shrink-0 px-2 py-1 text-xs underline-offset-4 hover:underline"
-        >
-          改我的情况
-        </button>
+        {/* 两个小文字链共用一份内边距，靠外层的 -mr-2 把最后一个贴到页边 ——
+            这样"有没有退出"两种情况下的右边缘都是齐的 */}
+        <div className="-mt-1 -mr-2 flex shrink-0 items-center">
+          <button
+            type="button"
+            onClick={() => router.push("/onboarding")}
+            className="text-tertiary shrink-0 px-2 py-1 text-xs underline-offset-4 hover:underline"
+          >
+            改我的情况
+          </button>
+          <SignOutLink />
+        </div>
       </header>
 
       {state.status === "loading" && (

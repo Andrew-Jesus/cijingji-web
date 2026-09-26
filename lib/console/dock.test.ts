@@ -58,8 +58,17 @@ describe("dockPresentation", () => {
   });
 
   it("背词进行中缩成小点", () => {
-    expect(dockPresentation("/learn")).toBe("mini");
-    expect(dockPresentation("/learn/session")).toBe("mini");
+    // 断言必须跟着**真实路径**走：学习页现在叫 `/study/<日期>`。
+    // 这里曾经写的是改名前的 `/learn`，于是断言一直"通过"，
+    // 而真实页面上那条规则从来没生效过 —— 假绿比红更危险。
+    expect(dockPresentation("/study")).toBe("mini");
+    expect(dockPresentation("/study/2026-09-26")).toBe("mini");
+  });
+
+  it("名前缀相近的页面不要误伤", () => {
+    // `/studies` 不是学习页。前缀判断必须带斜杠，否则会把别的页一起收进去
+    expect(dockPresentation("/studies")).toBe("full");
+    expect(dockPresentation("/studying")).toBe("full");
   });
 });
 

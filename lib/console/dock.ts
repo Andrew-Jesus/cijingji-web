@@ -82,7 +82,12 @@ export function panelSideFor(ratio: number): PanelSide {
 export function dockPresentation(pathname: string): DockPresentation {
   if (pathname === "/onboarding/result") return "full";
   if (pathname === "/onboarding" || pathname.startsWith("/onboarding/")) return "hidden";
-  if (pathname === "/learn" || pathname.startsWith("/learn/")) return "mini";
+  // ⚠️ 这里原本写的是 `/learn` —— 那是学习页改名前的老路径。
+  //    现在真实路径是 `/study/<日期>`（见 app/(app)/study/[sessionId]/page.tsx）。
+  //    名字改了、这里没跟着改，后果是"背词时缩成小点"这条规则
+  //    **永远不触发，而且不报错** —— 单测当时也是照着老路径写的，所以照样绿。
+  //    教训：改路由名时，除了搜代码，还要搜一遍**单测里的路径**。
+  if (pathname === "/study" || pathname.startsWith("/study/")) return "mini";
   return "full";
 }
 
