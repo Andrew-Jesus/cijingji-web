@@ -1,33 +1,48 @@
 "use client";
 
 /**
- * 小词展开后看到的面板
+ * 小词展开后的面板（Card 档）
  *
- * 三块，从上到下：
- *   ① 今日任务 —— 今天做了多少 / 一共多少，加一个"继续"按钮
- *   ② 动态 —— 网站各处推来的提示，倒序排列（最新在最上）
- *   ③ 页脚 —— 收起小词
+ * ── 它为什么不是"那块材料"────────────────────────────────────
+ * 材料（`ConsoleDock` 里那颗点 / 那枚胶囊）只负责"我是小词、今天到哪儿了"。
+ * 面板是另一样东西：一块**暖砂托盘，托着几张白卡** —— 跟首页主卡同一套语言
+ * （视觉重心只有一种手法：暖砂底衬托白卡）。所以它不参与四档形变，
+ * 打开时材料仍然是胶囊，它是那块胶囊的"把手"。
+ *
+ * 三张白卡，从上到下：
+ *   ① 小词 + 今日任务 —— 先自报家门，再报今天的量
+ *   ② 动态           —— 网站各处推来的提示，倒序（最新在最上）
+ *   ③ 运行状态        —— **只在开发者模式下存在**
  *
  * ── 「运行状态」为什么不在常规视野里 ─────────────────────────
  * 数据置信度、渲染是否降级、剪贴板导出……这些是**给开发者排查问题的**，
  * 用户看了只会困惑（"置信度 75%"是什么意思？）。所以它们只在
- * **开发者模式**下出现（长按悬浮球 0.6 秒进入），日常完全看不见。
+ * **开发者模式**下出现（长按材料 0.6 秒进入），日常完全看不见。
  *
  * ── 两条刻意的设计决定（沿用上一版，别改）─────────────────────
  * 1. **不编任何假参数**（比如版本号）。这块面板的价值就是"这里说的是真的"，
  *    编一个进去等于自毁。
  * 2. **不写结论性的漂亮话**。网络那行写"在线 / 离线"，不写"网络正常" ——
  *    `navigator.onLine` 只代表网卡连着，不代表真能出网。
+ *
+ * ── 托盘里的留白 ────────────────────────────────────────────
+ * 卡间 12px（`gap-3`）、卡内 20~24px（`p-5`）。**不加投影、不加装饰线** ——
+ * 分层靠"暖砂与白卡的色差 + 留白"，这是柔感风格唯一的手法。
  */
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-import { formatClock, noticesToText, type NoticeLevel } from "@/lib/console/notices";
-import type { RuntimeSnapshot } from "@/lib/console/probe";
-import { pushNotice, useConsoleStore, useConsoleTopAlert, useTodayProgress } from "@/lib/console/store";
 import { formatCny } from "@/lib/ai/contract";
 import { formatCacheHitRate, summarizeUsage, type UsageStats } from "@/lib/ai/usageStats";
+import { formatClock, noticesToText, type NoticeLevel } from "@/lib/console/notices";
+import type { RuntimeSnapshot } from "@/lib/console/probe";
+import {
+  pushNotice,
+  useConsoleStore,
+  useConsoleTopAlert,
+  useTodayProgress,
+} from "@/lib/console/store";
 import { seedBundle } from "@/lib/db/seed";
 import { loadRecentAiUsage } from "@/lib/db/studyRepo";
 import { progressRatio } from "@/lib/plan/todayProgress";
@@ -39,6 +54,9 @@ const LEVEL_DOT: Record<NoticeLevel, string> = {
   warning: "bg-warning-600",
   danger: "bg-danger-600",
 };
+
+/** 托盘里每一张白卡的公共长相。改一处就全变，不许各写一份 */
+const CARD = "bg-surface rounded-md p-5";
 
 const BUILD_LABEL = process.env.NODE_ENV === "production" ? "正式版" : "开发版";
 const CONFIDENCE_PCT = Math.round(seedBundle.meta.confidence * 100);
@@ -55,13 +73,13 @@ export function ConsolePanel({
   dev: boolean;
   /**
    * 面板能长多高 —— **CSS 长度表达式，不是像素值**。
-   * 由球当前的位置算出来（那一侧还剩多少空间），见 ConsoleDock。
+   * 由材料当前的位置算出来（那一侧还剩多少空间），见 ConsoleDock。
    * 传表达式而不是数字，是为了让它在转屏 / 手机地址栏收放时自动重算。
    */
   maxHeight: string;
   /**
-   * 入场方向。面板长在球上方 → 往上冒；长在球下方 → 往下落。
-   * 方向反了会像是"面板穿过球钻出来"，观感不对。
+   * 入场方向。面板长在材料上方 → 往上冒；长在下方 → 往下落。
+   * 方向反了会像是"面板穿过材料钻出来"，观感不对。
    */
   rise: "up" | "down";
   onClose: () => void;
@@ -101,7 +119,7 @@ export function ConsolePanel({
   const now = new Date();
   const dateLabel = `${now.getMonth() + 1} 月 ${now.getDate()} 日 · 周${"日一二三四五六"[now.getDay()]}`;
 
-  // 展开就把焦点收进面板：键盘用户按 Esc 才能生效（不然焦点还留在球上）
+  // 展开就把焦点收进面板：键盘用户按 Esc 才能生效（不然焦点还留在材料上）
   useEffect(() => {
     ref.current?.focus();
   }, []);
@@ -146,39 +164,38 @@ export function ConsolePanel({
       /*
         高度由外面算好传进来，**不写 max-h-[70vh]** ——
         70vh 是相对视口算的，管不住"面板往上长到哪"：
-        球被拖到屏幕上半部时，面板依然能长到视口的 70% 高，
+        材料被拖到屏幕上半部时，面板依然能长到视口的 70% 高，
         然后整块从屏幕顶上冒出去（实测顶边 −429px）。
-        现在封顶高度 = 球那一侧真实剩下的空间，所以永远出不去。
-        内容超了就在这块里滚动。
+        现在封顶高度 = 材料那一侧真实剩下的空间，所以永远出不去。
+        内容超了就在这块托盘里滚动。
       */
       style={{ maxHeight }}
-      className="border-subtle bg-surface shadow-float w-[min(20rem,calc(100vw-2.5rem))] overflow-y-auto rounded-lg border outline-none"
+      className="bg-feature flex w-[min(20rem,calc(100vw-2.5rem))] flex-col gap-3 overflow-y-auto rounded-lg p-1.5 outline-none"
     >
-      {/* ① 头部 */}
-      <header className="border-subtle flex items-start gap-3 border-b px-4 py-3">
-        <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${lampClass}`} aria-hidden />
-        <div className="min-w-0 flex-1">
-          <p className="text-primary text-sm leading-none font-medium">小词</p>
-          <p className="text-tertiary mt-1.5 text-[11px] tracking-[0.06em]">
-            {dev ? `${BUILD_LABEL} · 开发者模式` : dateLabel}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-tertiary hover:text-secondary focus-visible:ring-brand-600 focus-visible:ring-offset-surface -mt-0.5 -mr-1 shrink-0 rounded-sm px-1.5 py-1 text-[11px] transition-colors focus-visible:ring-2 focus-visible:outline-none"
-        >
-          收起
-        </button>
-      </header>
+      {/* ① 小词 + 今日任务。先自报家门，再报今天的量 —— 合成一张卡，因为它们都是"我" */}
+      <section className={CARD}>
+        <header className="flex items-start gap-3">
+          <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${lampClass}`} aria-hidden />
+          <div className="min-w-0 flex-1">
+            <p className="text-primary text-sm leading-none font-medium">小词</p>
+            <p className="text-tertiary mt-1.5 text-[11px] tracking-[0.06em]">
+              {dev ? `${BUILD_LABEL} · 开发者模式` : dateLabel}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-tertiary hover:text-secondary focus-visible:ring-brand-600 focus-visible:ring-offset-surface -mt-0.5 -mr-1 shrink-0 rounded-sm px-1.5 py-1 text-[11px] transition-colors focus-visible:ring-2 focus-visible:outline-none"
+          >
+            收起
+          </button>
+        </header>
 
-      {/* ② 今日任务 */}
-      <section className="px-4 pt-4 pb-4">
         {/*
           这里**不再**在标题右边重复一遍"12 / 36 词" —— 大数字就在下面一行，
           同一块区域里把同一个数写两遍，看着像没做完。
         */}
-        <p className="text-tertiary text-[11px] tracking-[0.08em]">今日任务</p>
+        <p className="text-tertiary mt-5 text-[11px] tracking-[0.08em]">今日任务</p>
 
         {today ? (
           <>
@@ -213,8 +230,8 @@ export function ConsolePanel({
         </button>
       </section>
 
-      {/* ③ 动态 */}
-      <section className="border-subtle border-t px-4 py-3.5">
+      {/* ② 动态 */}
+      <section className={CARD}>
         <div className="flex items-baseline justify-between gap-3">
           <p className="text-tertiary text-[11px] tracking-[0.08em]">动态</p>
           <p className="text-tertiary text-[11px] tabular-nums">{notices.length} 条</p>
@@ -248,13 +265,13 @@ export function ConsolePanel({
       </section>
 
       {/*
-        ④ 开发者区。长按球 0.6 秒才会出现。
+        ③ 开发者区。长按材料 0.6 秒才会出现。
         这里的东西对用户没有意义，只在我排查问题时有用 —— 所以默认整块不存在。
       */}
       {dev && (
-        <section className="border-subtle border-t px-4 py-3.5">
+        <section className={CARD}>
           <p className="text-tertiary text-[11px] tracking-[0.08em]">运行状态（开发者）</p>
-          <dl className="mt-2.5 space-y-1.5">
+          <dl className="mt-3 space-y-1.5">
             <Fact
               label="本地词库"
               value={runtime ? `${runtime.words} 词 · ${runtime.placements} 条归属` : "读取中…"}
@@ -311,7 +328,7 @@ export function ConsolePanel({
             </p>
           )}
 
-          <div className="border-subtle mt-3 flex items-center justify-between gap-3 border-t pt-2.5">
+          <div className="mt-4 flex items-center justify-between gap-3">
             <button
               type="button"
               onClick={clear}
@@ -332,16 +349,17 @@ export function ConsolePanel({
         </section>
       )}
 
-      {/* ⑤ 页脚 */}
-      <footer className="border-subtle flex items-center justify-between gap-3 border-t px-4 py-2.5">
+      {/* ④ 页脚。做成一条薄白条而不是直接写在暖砂上 ——
+          暖砂底上的次级文字对比度不够（#7a736b 压 #ece5da 只有 3.5:1）。 */}
+      <footer className="bg-surface flex items-center justify-between gap-3 rounded-md px-4 py-2.5">
         <button
           type="button"
           onClick={onHide}
-          className="text-secondary hover:text-primary focus-visible:ring-brand-600 rounded-sm px-1.5 py-1 text-[11px] transition-colors focus-visible:ring-2 focus-visible:outline-none"
+          className="text-secondary hover:text-primary focus-visible:ring-brand-600 focus-visible:ring-offset-surface rounded-sm px-1.5 py-1 text-[11px] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
         >
           收起小词
         </button>
-        {dev && <span className="text-tertiary text-[11px]">长按球可退出开发者模式</span>}
+        {dev && <span className="text-tertiary text-[11px]">长按可退出开发者模式</span>}
       </footer>
     </div>
   );

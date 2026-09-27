@@ -48,6 +48,14 @@
   --color-danger-50: #f5e5e2;
   --color-danger-600: #b5746a;
 
+  /* 小词（灵动岛）的"脸"。取自 App 图标底 —— 与 `scripts/gen-app-icon.py` 生成的那块墨
+     是**同一个色**。它是全站唯一的深色块，所以改它不是审美问题，是身份问题：
+     小词 = 那块图标长大之后的样子，墨色就是它的身份证。
+     Dot / Pill / Banner 三档都用它铺底，形变时才不会像"换了个东西"。 */
+  --color-ink: #2b2a27;
+  /* 铺在墨底上的字。用 page 那个暖白，而不是纯白 —— 纯白压在暖黑上会发青。 */
+  --color-on-ink: #f7f5f2;
+
   /* 小词进度环的"跑道"（未完成那一圈）。
      它压在**深色圆盘**上，所以必须是半透明白 —— 用页面上的灰（--color-strong）
      会在深底上糊成一条脏线。只有这一处用它，别拿去当页面背景色。 */
@@ -90,6 +98,12 @@
    微信 UA 或用户偏好减少动效时，把位移量归零、只留淡入（见 lib/ua/wechat.ts）。 */
 :root {
   --motion-shift: 8px;
+  /* 小词"被拉长"时中段收细的深度（1 = 不收细）。
+     ⚠️ 改它要跟 `lib/island/form.ts` 的 `SQUASH_SCALE` 一起改 ——
+     那边有单测盯着取值范围，两边飘了就会"看起来没事、其实不对"。
+     它**故意不放进 `@theme`**：它不生成任何类名，只给下面的 @keyframes 用，
+     而 `@theme` 的变量在 Tailwind v4 下未必都被输出 —— 被裁掉就是"静默不收细"。 */
+  --island-squash: 0.955;
 }
 
 [data-motion="reduced"] {
@@ -100,6 +114,60 @@
 [data-motion="reduced"] [data-animated] {
   transition-property: opacity;
   animation: none;
+}
+
+/*
+ * 小词各档的形变，在降级模式下一律不演（内容淡入不算位移，留着）。
+ *
+ * 组件里其实已经按 `motionReduced` 把 transition 设成 `none` 了；这里再保一道，
+ * 是为了防"降级标记已打在 <html> 上、而 JS 还没跑到"的那几帧漏出形变。
+ * 必须用 `!important` —— 那条 transition 是内联写在元素上的，样式表要压过它只能这样。
+ *
+ * `animation: none` 挡的是**中段收细**（见下面的 island-squash-*）：
+ * 降级时组件已经不挂那条 animation 了，这里再压一道，理由同上。
+ */
+[data-motion="reduced"] [data-island-material] {
+  transition: none !important;
+  animation: none !important;
+}
+
+/*
+ * 「被拉长」的手感 —— 形变期间中段收细一下，像软糖被扯开。
+ *
+ * 只动 **scale**（`scaleY`），在允许范围里，而且**不是回弹**：
+ * 1 → 最深 → 1 一路单调，没有过冲、没有反复。深度取自 `--island-squash`。
+ * 它必须挂在**材料层**上（`data-island-material`），不能挂外层定位层 ——
+ * 位移在那层，同一个元素身上既 `translate` 又播 `scaleY` 关键帧会互相覆盖。
+ *
+ * 为什么是**两个一模一样**的关键帧：同一个元素重复设同一个 `animation-name`，
+ * 浏览器认为"没变"，不会重播。组件用序号奇偶在两个名字之间轮换，才有"重新开始"。
+ * 也不能靠给材料换 `key` 重挂载 —— 那样过渡就没了起点，形变会直接跳过去。
+ *
+ * 收尾停在 `scaleY(1)`，与"没有 transform"是同一个样子，
+ * 所以动画播完交还给元素本身时不会闪一下（不需要 fill-mode）。
+ */
+@keyframes island-squash-a {
+  0% {
+    transform: scaleY(1);
+  }
+  45% {
+    transform: scaleY(var(--island-squash));
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes island-squash-b {
+  0% {
+    transform: scaleY(1);
+  }
+  45% {
+    transform: scaleY(var(--island-squash));
+  }
+  100% {
+    transform: scaleY(1);
+  }
 }
 
 /*
