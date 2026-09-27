@@ -134,6 +134,15 @@ export interface Profile {
   timezone: string;
   created_at: string;
   /**
+   * 最后一次改动的时间。
+   *
+   * 为什么要单独有它：`created_at` 表达不了"改过"。一个人只有一份画像，
+   * 两台设备各改一次时，靠 `created_at` 根本判不出谁后写 ——
+   * 先建号的那份永远"更旧"，于是**后改的那次改动会被丢掉且不报错**。
+   * 同步器拿它做"最后改的算数"的判据（实施方案 §7.3）。
+   */
+  updated_at: string;
+  /**
    * 完成冷启动引导的时间；null = 还没走完引导。
    * 界面据它决定是否跳转 /onboarding —— **不靠 level_self_report 之类的字段去猜**，
    * 猜出来的状态机迟早会在某个边界上出错。
@@ -174,6 +183,15 @@ export interface DailyPlan {
   brief: string | null;
   estimated_minutes: number;
   generated_at: string;
+  /**
+   * 最后一次改动的时间。**可选** —— 阶段 0 存下来的老计划没有这个字段，
+   * 读的时候一律回落 `generated_at`（回落口径只允许有一处，在同步器里）。
+   *
+   * 注意它**不参与**"同一天两份计划谁赢"的判定：那件事按 §7.3 看"**进度谁更靠前**"。
+   * 时间新 ≠ 用户实际在做的那份 —— 电脑上刚打开首页顺手续排一份 `pending`，
+   * 按时间取就会把手机上做到一半的进度打回原点，用户会以为"我的进度丢了"。
+   */
+  updated_at?: string;
 }
 
 /** 这张表决定归因能有多准 —— 只记对错是浪费。 */

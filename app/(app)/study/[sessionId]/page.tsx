@@ -84,6 +84,7 @@ import type {
   StudyCard,
   StudySummary,
 } from "@/lib/study/types";
+import { syncNow } from "@/lib/sync/sync";
 
 /** 例句在界面上的样子。`isAiGenerated` 是**唯一**决定标注文案的字段 */
 interface ExampleView {
@@ -591,6 +592,10 @@ export default function StudyPage() {
       } catch {
         // 状态没写成功不影响用户；下次进来还会算一遍队列
       }
+      // 刚产生了一整批作答记录 —— 这是往后推最划算的一刻（§7.5）。
+      // 不 await：界面的节奏不该等网络（这一批推上去可能要一两秒），
+      // 失败也由同步器内部吞掉，绝不在这里弹错给正在看结算页的人。
+      void syncNow("session-end");
       pushNotice({
         key: "study-done",
         level: "success",

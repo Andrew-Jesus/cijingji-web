@@ -33,7 +33,7 @@ import { pushNotice, setTodayProgress } from "@/lib/console/store";
 import { db } from "@/lib/db/local";
 import { getProfile, isOnboarded } from "@/lib/db/repo";
 import { DATA_HONEST_NOTE, ensureSeeded } from "@/lib/db/seed";
-import { deriveWeakWordIds, saveDailyPlan, todayKey } from "@/lib/db/studyRepo";
+import { deriveWeakWordIds, loadReviewLogs, saveDailyPlan, todayKey } from "@/lib/db/studyRepo";
 import { findGoal, interestLabel, isGoalSupported } from "@/lib/onboarding/questions";
 import { countDoneInPlan } from "@/lib/plan/todayProgress";
 import { assembleTodayPlan } from "@/lib/plan/todayPlan";
@@ -90,7 +90,9 @@ export default function HomePage() {
           db.senses.toArray(),
           db.word_placements.toArray(),
           db.goal_profiles.toArray(),
-          db.review_logs.toArray(),
+          // 走仓库层，不直接读表 —— 它只返回**属于当前用户**的作答记录。
+          // 直接读全表会让"今日已练"把上一个人在这台设备上留下的记录也算进来。
+          loadReviewLogs(),
         ]);
         const snapshot = { units, words, senses, placements };
 

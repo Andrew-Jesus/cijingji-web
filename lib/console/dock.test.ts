@@ -65,10 +65,18 @@ describe("dockPresentation", () => {
     expect(dockPresentation("/study/2026-09-26")).toBe("mini");
   });
 
+  it("登录页躲起来 —— 那一屏上它报的是上一个人的进度", () => {
+    // 小词的进度 / 一键继续全读本机数据，而登录页正是"当前是谁还没定下来"
+    // 的那一屏：换个人用同一台电脑时，他还没输账号就会先看见前一个人的进度。
+    expect(dockPresentation("/login")).toBe("hidden");
+  });
+
   it("名前缀相近的页面不要误伤", () => {
     // `/studies` 不是学习页。前缀判断必须带斜杠，否则会把别的页一起收进去
     expect(dockPresentation("/studies")).toBe("full");
     expect(dockPresentation("/studying")).toBe("full");
+    // `/logins` 同理：它不是登录页，该照常出现
+    expect(dockPresentation("/logins")).toBe("full");
   });
 });
 

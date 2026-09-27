@@ -13,17 +13,17 @@ import type { AiUsageDraft } from "@/lib/ai/contract";
 import { localDayKey } from "@/lib/plan/todayProgress";
 import { weakWordIds, type OutcomeLog } from "@/lib/study/history";
 import type { ReviewRecord } from "@/lib/study/types";
+import { getActiveUserId } from "./identity";
+import { exampleIdFor, planIdFor } from "./ids";
 import { db } from "./local";
-import { LOCAL_PROFILE_ID } from "./repo";
 import type { AiUsage, DailyPlan, DailyPlanItem, PlanStatus, ReviewLog, UserExample } from "./types";
+
+// 编号规则住在 `./ids.ts`（升级事务也要用同一份，放这里会跟 local.ts 绕成环）。
+// 从这里转出去，调用方 import 哪个都行。
+export { exampleIdFor, planIdFor };
 
 /** 排计划时最多参考多少个错词。够填满"复习配额"即可，不必把整本错题本都读进来 */
 export const WEAK_WORD_LIMIT = 40;
-
-/** 计划 id 由**日期**决定 —— 一天一份，重复进入同一天拿到的是同一份（幂等） */
-export function planIdFor(planDate: string): string {
-  return `plan:${planDate}`;
-}
 
 /** 今天的日期键（本地时区）。学习页的路由段就用它 */
 export function todayKey(now: Date): string {
@@ -31,10 +31,20 @@ export function todayKey(now: Date): string {
 }
 
 let seq = 0;
-/** 本地 id。阶段 0 不要求全局唯一（没有多端），只要稳定且不撞 */
+/**
+ * 本地 id。
+ *
+ * ⚠️ 它**不是** uuid —— 建表 SQL 里那句"客户端生成的 uuid，跨设备不撞"是错的，
+ * 已一并更正。原来是「毫秒时间戳 + 每次页面加载从 1 开始的序号」：
+ * **同一个浏览器开两个标签页时，这两个数会一模一样**。
+ * 后果不是"重一条"，是**互相覆盖**：本地表 `id` 是主键，后写的那条顶掉先写的；
+ * 推上云还会撞云端主键（同样是主键）→ 整批 upsert 被拒 → 一次同步白跑。
+ * 补一段随机尾巴，把"偶尔撞"变成"不会撞"。
+ */
 function localId(prefix: string, at: Date): string {
   seq += 1;
-  return `${prefix}-${at.getTime().toString(36)}-${seq}`;
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `${prefix}-${at.getTime().toString(36)}-${seq}-${rand}`;
 }
 
 // ------------------------------------------------------------------ 今日任务单
@@ -53,18 +63,22 @@ export interface SavePlanInput {
  * 用户"学了一半退出再进来"就会看到进度被抹平。
  */
 export async function saveDailyPlan(input: SavePlanInput): Promise<DailyPlan> {
-  const id = planIdFor(input.planDate);
+  const userId = getActiveUserId();
+  const id = planIdFor(input.planDate, userId);
   const existing = await db.daily_plans.get(id);
 
   const next: DailyPlan = {
     id,
-    user_id: LOCAL_PROFILE_ID,
+    user_id: userId,
     plan_date: input.planDate,
     status: existing?.status ?? "pending",
     items: input.items,
     brief: input.brief,
     estimated_minutes: input.estimatedMinutes,
     generated_at: existing?.generated_at ?? input.now.toISOString(),
+    // 覆盖保存也是一次改动 —— 云端那一列要有值，本地也就跟着记。
+    // 它不参与"同一天两份谁赢"的判定（那个看进度，见 types.ts 的说明）。
+    updated_at: input.now.toISOString(),
   };
 
   await db.daily_plans.put(next);
@@ -72,14 +86,30 @@ export async function saveDailyPlan(input: SavePlanInput): Promise<DailyPlan> {
 }
 
 export async function loadDailyPlan(planDate: string): Promise<DailyPlan | null> {
-  return (await db.daily_plans.get(planIdFor(planDate))) ?? null;
+  return (await db.daily_plans.get(planIdFor(planDate, getActiveUserId()))) ?? null;
 }
 
 export async function setPlanStatus(planDate: string, status: PlanStatus): Promise<void> {
-  await db.daily_plans.update(planIdFor(planDate), { status });
+  await db.daily_plans.update(planIdFor(planDate, getActiveUserId()), { status });
 }
 
 // ------------------------------------------------------------------ 作答记录
+
+/**
+ * 只取**属于当前用户**的作答记录。
+ *
+ * 为什么读取侧也要过一层：**同一台设备换个人登录**时，上一个人的行还留在本机
+ * （登出不清库，见 identity.ts 的说明）。不过滤的话，新登录的人会在
+ * "今日已练 / 错词本"里看到上一个人的记录 —— 比起丢数据，**串号更难被发现**：
+ * 数字看着都正常，只是那些词他从来没错过。
+ *
+ * 量级说明：一天最多百来条，全取再筛的代价可以忽略（同步器也是这么读的）。
+ * 阶段 1 有了服务端，这件事该在 SQL 里按 `user_id` 做（那时也不该在前端做）。
+ */
+async function ownReviewLogs(): Promise<ReviewLog[]> {
+  const userId = getActiveUserId();
+  return (await db.review_logs.toArray()).filter((log) => log.user_id === userId);
+}
 
 /**
  * 某一天的全部作答记录。
@@ -87,16 +117,14 @@ export async function setPlanStatus(planDate: string, status: PlanStatus): Promi
  * 为什么直接 `toArray()` 不用索引范围：`created_at` 存的是 UTC 的 ISO 串，
  * 而"今天"是**用户本地时区**的今天。用字符串范围去切本地日界，在时区不是 0 的时候
  * 一定会切错（东八区晚上 8 点之后就被切成明天）。所以老老实实全取再按本地日过滤。
- * 阶段 0 单人单机，一天最多百来条，这个代价可以忽略；
- * 阶段 1 有了服务端，这件事应该在 SQL 里按时区做（那时也不该在前端做）。
  */
 export async function loadReviewLogs(): Promise<ReviewLog[]> {
-  return db.review_logs.toArray();
+  return ownReviewLogs();
 }
 
 export async function loadReviewLogsForDay(now: Date): Promise<ReviewLog[]> {
   const key = localDayKey(now);
-  const all = await db.review_logs.toArray();
+  const all = await ownReviewLogs();
   return all.filter((log) => {
     const at = new Date(log.created_at);
     return !Number.isNaN(at.getTime()) && localDayKey(at) === key;
@@ -113,7 +141,7 @@ export async function loadReviewLogsForDay(now: Date): Promise<ReviewLog[]> {
 export async function appendReviewLog(record: ReviewRecord, now: Date): Promise<void> {
   const row: ReviewLog = {
     id: localId("rl", now),
-    user_id: LOCAL_PROFILE_ID,
+    user_id: getActiveUserId(),
     word_id: record.word_id,
     session_id: record.session_id,
     mode: record.mode,
@@ -129,7 +157,7 @@ export async function appendReviewLog(record: ReviewRecord, now: Date): Promise<
 
 /** 还没稳住的词（最近错的排前面）→ 直接喂给 `buildDailyPlan` */
 export async function deriveWeakWordIds(limit = WEAK_WORD_LIMIT): Promise<string[]> {
-  const logs = await db.review_logs.toArray();
+  const logs = await ownReviewLogs();
   const rows: OutcomeLog[] = logs.map((l) => ({
     word_id: l.word_id,
     is_correct: l.is_correct,
@@ -160,8 +188,11 @@ export async function findCachedExamples(
   const out = new Map<string, UserExample>();
   if (wordIds.length === 0) return out;
 
+  const userId = getActiveUserId();
   const rows = await db.user_examples.where("word_id").anyOf([...wordIds]).toArray();
   for (const row of rows) {
+    // 别人的例句不算缓存命中 —— 否则会拿上一个人生成的句子给这个人看
+    if (row.user_id !== userId) continue;
     if (row.interest_tag !== interestTag) continue;
     if (!out.has(row.word_id)) out.set(row.word_id, row);
   }
@@ -178,10 +209,12 @@ export interface SaveExampleInput {
 }
 
 export async function saveExample(input: SaveExampleInput): Promise<UserExample> {
+  const userId = getActiveUserId();
   const row: UserExample = {
-    // id 直接用键，避免"同一个词同一个兴趣"存出两条（表上也有唯一索引兜底）
-    id: `ex:${input.wordId}:${input.interestTag}`,
-    user_id: LOCAL_PROFILE_ID,
+    // id 直接用键（含主人）：同一个人同一个词同一个兴趣只存一条（表上还有唯一索引兜底）。
+    // 主人必须在里面 —— 见 `exampleIdFor` 的说明。
+    id: exampleIdFor(input.wordId, input.interestTag, userId),
+    user_id: userId,
     word_id: input.wordId,
     sentence: input.sentence,
     gloss: input.gloss,
@@ -204,7 +237,7 @@ export async function recordAiUsage(drafts: readonly AiUsageDraft[], now: Date):
 
   const rows: AiUsage[] = drafts.map((d, i) => ({
     id: `${localId("ai", now)}-${i}`,
-    user_id: LOCAL_PROFILE_ID,
+    user_id: getActiveUserId(),
     task: d.task,
     model: d.model,
     input_tokens: d.input_tokens,
@@ -225,9 +258,12 @@ export async function recordAiUsage(drafts: readonly AiUsageDraft[], now: Date):
 /**
  * 取最近的记账（默认 200 条）。
  * 开发者模式只看"今天的"汇总，但历史要留够 —— 否则跨天之后的排查没有依据。
+ *
+ * 按当前用户筛：换了个人登录还显示上一个人的账，会让人以为"我没用 AI 怎么花了钱"。
  */
 export async function loadRecentAiUsage(limit = 200): Promise<AiUsage[]> {
-  const all = await db.ai_usage.toArray();
+  const userId = getActiveUserId();
+  const all = (await db.ai_usage.toArray()).filter((row) => row.user_id === userId);
   return all
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, Math.max(limit, 0));

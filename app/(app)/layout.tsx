@@ -10,7 +10,14 @@
  */
 
 import { AuthGate } from "@/components/auth/AuthGate";
+import { SyncRunner } from "@/components/sync/SyncRunner";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  return <AuthGate>{children}</AuthGate>;
+  return (
+    <AuthGate>
+      {/* 同步的节拍器。放在门卫**里面** —— 身份没认下来之前不该动数据 */}
+      <SyncRunner />
+      {children}
+    </AuthGate>
+  );
 }

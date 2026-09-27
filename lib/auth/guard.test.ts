@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { decideGuard, decideLoginEntry } from "./guard";
+import {
+  FIRST_SYNC_BUDGET_MS,
+  decideGuard,
+  decideLoginEntry,
+  shouldWaitForFirstSync,
+} from "./guard";
 
 /**
  * 门卫规则的两条命门都在这份测试里。
@@ -48,5 +53,25 @@ describe("decideLoginEntry —— 登录页该显示表单还是弹回首页", (
   it("没接账号系统：显示表单（页面上换成一说明块，不是表单控件）", () => {
     expect(decideLoginEntry(false, "none")).toBe("form");
     expect(decideLoginEntry(false, "session")).toBe("form");
+  });
+});
+
+describe("shouldWaitForFirstSync —— 放行前要不要先等一次同步", () => {
+  it("★ 本机没有画像：要等 —— 否则会被当成新用户送去重做一遍引导", () => {
+    // 实测（2026-09-27）：新设备登录已有账号 → 落点是 /onboarding，
+    // 而十几秒后本机其实已经把云端画像/任务单/记录全拉下来了。
+    // 数据没丢，是人被推回去重做了一遍。
+    expect(shouldWaitForFirstSync(false)).toBe(true);
+  });
+
+  it("本机有画像：不等 —— 首屏不等网络这条硬要求就靠它守住", () => {
+    // 老用户回到自己设备是最常见的一路：多等 5 秒只为了确认一件已经知道的事，
+    // 纯亏。所以这一步**只在"连画像都没有"时才走**。
+    expect(shouldWaitForFirstSync(true)).toBe(false);
+  });
+
+  it("等的上限是个有界的小数字 —— 它是「最多卡住多久」，不是「要等多久」", () => {
+    expect(FIRST_SYNC_BUDGET_MS).toBeGreaterThan(0);
+    expect(FIRST_SYNC_BUDGET_MS).toBeLessThanOrEqual(8000);
   });
 });
