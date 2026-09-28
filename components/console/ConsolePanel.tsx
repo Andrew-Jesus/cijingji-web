@@ -34,7 +34,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { formatCny } from "@/lib/ai/contract";
-import { formatCacheHitRate, summarizeUsage, type UsageStats } from "@/lib/ai/usageStats";
+import {
+  formatCacheHitRate,
+  summarizeUsage,
+  usageOriginNote,
+  type UsageStats,
+} from "@/lib/ai/usageStats";
+import { loadTodayUsage, type UsageOrigin } from "@/lib/ai/usageSource";
 import { formatClock, noticesToText, type NoticeLevel } from "@/lib/console/notices";
 import type { RuntimeSnapshot } from "@/lib/console/probe";
 import {
@@ -44,7 +50,6 @@ import {
   useTodayProgress,
 } from "@/lib/console/store";
 import { seedBundle } from "@/lib/db/seed";
-import { loadRecentAiUsage } from "@/lib/db/studyRepo";
 import { progressRatio } from "@/lib/plan/todayProgress";
 
 /** 级别 → 圆点颜色。走 design token 的类名，不写死色值 */
@@ -95,19 +100,32 @@ export function ConsolePanel({
    * 今天的 AI 记账汇总。**只在开发者模式下读** ——
    * "调了几次、花了多少钱、缓存命中多少"对用户毫无意义，
    * 而每次打开面板都去扫一遍 `ai_usage` 表也是白费。
+   *
+   * 数据来源是 `loadTodayUsage`：**优先云端、取不到才回落本机**，
+   * 并且把"这份账是从哪来的"一并带回来。为什么要标出来：
+   * 不标的话，"今天 3 次"这行字在云端和本机两种情况下长得一模一样，
+   * 而它们的可信度完全不同 —— 一个是权威账，一个是本机副本。
    */
   const [usage, setUsage] = useState<UsageStats | null>(null);
+  const [usageOrigin, setUsageOrigin] = useState<UsageOrigin | null>(null);
+  const [usageNote, setUsageNote] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!dev) return;
     let cancelled = false;
-    void loadRecentAiUsage()
-      .then((rows) => {
-        if (!cancelled) setUsage(summarizeUsage(rows, new Date()));
+    void loadTodayUsage(new Date())
+      .then((today) => {
+        if (cancelled) return;
+        setUsage(summarizeUsage(today.rows, new Date()));
+        setUsageOrigin(today.origin);
+        setUsageNote(usageOriginNote(today));
       })
       .catch(() => {
-        if (!cancelled) setUsage(null);
+        if (cancelled) return;
+        setUsage(null);
+        setUsageOrigin(null);
+        setUsageNote(null);
       });
     return () => {
       cancelled = true;
@@ -144,6 +162,13 @@ export function ConsolePanel({
       });
     }
   }
+
+  /**
+   * 来源标记。**只给一个词**，不写句子 —— 面板上已经有五行数字，
+   * 再多一句解释会把这个小角落压得很吵。真正需要解释的情况走下面那行提示。
+   */
+  const originSuffix =
+    usageOrigin === "cloud" ? " · 云端" : usageOrigin === "local" ? " · 本机" : "";
 
   const lampClass =
     alert === "danger"
@@ -301,7 +326,7 @@ export function ConsolePanel({
                 !usage
                   ? "读取中…"
                   : usage.has_data
-                    ? `今天 ${usage.calls} 次${usage.failed > 0 ? `（失败 ${usage.failed}）` : ""}`
+                    ? `今天 ${usage.calls} 次${usage.failed > 0 ? `（失败 ${usage.failed}）` : ""}${originSuffix}`
                     : "今天还没调过"
               }
             />
@@ -321,10 +346,19 @@ export function ConsolePanel({
             )}
           </dl>
 
+          {/*
+            来源提示：只在"这份账不是云端权威账"或"两边条数没对上"时出现。
+            平时一个字都不说 —— 开发者模式也不该刷废话，
+            否则真信号会被淹没在常驻说明里（那等于没有信号）。
+          */}
+          {usageNote && (
+            <p className="text-warning-600 mt-2 text-[11px] leading-relaxed">{usageNote}</p>
+          )}
+
           {/* 价格表里查不到的模型不会静默变成"免费"——这句话就是防它悄悄发生的 */}
           {usage && usage.unpriced_model_calls > 0 && (
             <p className="text-tertiary mt-2 text-[11px] leading-relaxed">
-              有 {usage.unpriced_model_calls} 次调用的模型不在价格表里，那几笔**没计价**（不是免费的）。
+              有 {usage.unpriced_model_calls} 次调用的模型不在价格表里，那几笔没计价（不是免费的）。
             </p>
           )}
 

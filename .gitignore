@@ -14,7 +14,10 @@
 /coverage
 
 # next.js
-/.next/
+# 用通配符而不是写死 `/.next-b3/`：那个名字是"临时用一次"的产物目录
+# （`NEXT_DIST_DIR=.next-b3`，原因见 next.config.ts），下次可能叫别的。
+# 写死一个名字的结果是"多出一个没被忽略的 130M 目录"，而它会在提交前才被发现。
+/.next*/
 /out/
 
 # production

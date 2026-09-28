@@ -4,7 +4,10 @@ import {
   EMPTY_USAGE_STATS,
   filterToday,
   formatCacheHitRate,
+  startOfLocalDay,
   summarizeUsage,
+  toUsageLike,
+  usageOriginNote,
   type UsageLike,
 } from "./usageStats";
 
@@ -142,5 +145,144 @@ describe("formatCacheHitRate", () => {
     expect(formatCacheHitRate(0)).toBe("0%");
     expect(formatCacheHitRate(0.876)).toBe("88%");
     expect(formatCacheHitRate(1)).toBe("100%");
+  });
+});
+
+describe("startOfLocalDay", () => {
+  it("给的是本机时区的 0 点，不是 UTC 的", () => {
+    const start = startOfLocalDay(now);
+    expect(start.getFullYear()).toBe(2026);
+    expect(start.getMonth()).toBe(8);
+    expect(start.getDate()).toBe(19);
+    expect(start.getHours()).toBe(0);
+    expect(start.getMinutes()).toBe(0);
+    expect(start.getSeconds()).toBe(0);
+    expect(start.getMilliseconds()).toBe(0);
+  });
+
+  it("**不改调用方传进来的那个对象**", () => {
+    // 这类"函数偷偷改了你的东西"的副作用，不写成断言就永远不会被发现
+    const input = new Date(2026, 8, 19, 15, 30, 0);
+    const before = input.getTime();
+    startOfLocalDay(input);
+    expect(input.getTime()).toBe(before);
+  });
+
+  it("凌晨 1 点与晚上 11 点落到同一个 0 点（跨日的边界在 0 点，不在 UTC 0 点）", () => {
+    expect(startOfLocalDay(new Date(2026, 8, 19, 1, 5, 0)).getTime()).toBe(
+      startOfLocalDay(new Date(2026, 8, 19, 23, 55, 0)).getTime(),
+    );
+  });
+});
+
+describe("toUsageLike：云端行 → 汇总行", () => {
+  it("字段逐个对上，数字收敛成 number", () => {
+    const row = toUsageLike({
+      task: "example_personalized",
+      model: "deepseek-flash",
+      input_tokens: 1200,
+      output_tokens: 80,
+      cached_tokens: 1100,
+      cost_cny: 0.0003,
+      priced: true,
+      ok: true,
+      created_at: at(19, 10),
+    });
+    expect(row).toEqual({
+      task: "example_personalized",
+      model: "deepseek-flash",
+      input_tokens: 1200,
+      output_tokens: 80,
+      cached_tokens: 1100,
+      cost_cny: 0.0003,
+      priced: true,
+      ok: true,
+      created_at: at(19, 10),
+    });
+  });
+
+  it("`numeric` 列回来是字符串也能算（不只是 number）", () => {
+    // PostgREST 把 numeric 序列化成什么，取决于版本与精度；两种都得认，
+    // 否则某天升一次 Supabase 就会让所有金额静默归零
+    const row = toUsageLike({ cost_cny: "0.000300", input_tokens: "1500", ok: true });
+    expect(row.cost_cny).toBe(0.0003);
+    expect(row.input_tokens).toBe(1500);
+  });
+
+  it("缺字段与脏数据都收敛成 0 / 空串，不产生 NaN", () => {
+    const row = toUsageLike({ ok: "true" });
+    expect(row.input_tokens).toBe(0);
+    expect(row.cost_cny).toBe(0);
+    expect(row.created_at).toBe("");
+    // ok 用严格 `=== true`：字符串 "true" 不算成功 —— 云端列是 boolean，
+    // 收到字符串说明这一列对不上，宁可算成失败也别把失败记成成功
+    expect(row.ok).toBe(false);
+  });
+
+  it("`priced` 字段缺失时留 undefined（「不知道」不等于「没计价」）", () => {
+    expect(toUsageLike({ ok: true }).priced).toBeUndefined();
+    expect(toUsageLike({ ok: true, priced: false }).priced).toBe(false);
+  });
+
+  it("收敛出来的行能直接喂给 summarizeUsage", () => {
+    const s = summarizeUsage(
+      [toUsageLike({ task: "t", model: "deepseek-flash", input_tokens: 100, cached_tokens: 50, cost_cny: 0.001, priced: true, ok: true, created_at: at(19, 10) })],
+      now,
+    );
+    expect(s.calls).toBe(1);
+    expect(s.cache_hit_rate).toBeCloseTo(0.5, 6);
+    expect(s.cost_cny).toBe(0.001);
+  });
+});
+
+describe("usageOriginNote：什么时候该说一句", () => {
+  it("云端的账且两边条数一致 → 不说话（别刷废话）", () => {
+    expect(usageOriginNote({ origin: "cloud", cloudCount: 3, localCount: 3, cloudError: null })).toBe(
+      null,
+    );
+  });
+
+  it("两边都空 → 也不说话（今天没调过是正常状态，不是异常）", () => {
+    expect(usageOriginNote({ origin: "cloud", cloudCount: 0, localCount: 0, cloudError: null })).toBe(
+      null,
+    );
+  });
+
+  it("云端与本地条数不一致 → 必须说出来（双写有一条链断了）", () => {
+    const note = usageOriginNote({ origin: "cloud", cloudCount: 3, localCount: 2, cloudError: null });
+    expect(note).toContain("3");
+    expect(note).toContain("2");
+    expect(note).toContain("没对上");
+  });
+
+  it("回落本机且有原因 → 说清这份账不是云端的、以及为什么", () => {
+    const note = usageOriginNote({
+      origin: "local",
+      cloudCount: null,
+      localCount: 2,
+      cloudError: "操作超过 4000 毫秒还没结果",
+    });
+    expect(note).toContain("本机");
+    expect(note).toContain("4000");
+  });
+
+  it("回落本机但没有原因 → 不说（没话可说的时候别硬凑一句）", () => {
+    expect(usageOriginNote({ origin: "local", cloudCount: null, localCount: 2, cloudError: null })).toBe(
+      null,
+    );
+  });
+
+  it("未登录导致的回落 → 说「没登录」，**绝不能说成「两边没对上」**", () => {
+    // 未登录时云端按规矩返回空数组（RLS 只放行自己的行），
+    // 若照条数比就会把"正常状态"报成"双写断了一条链" ——
+    // 那个警告一共只有三种真实成因，掺进一个恒假的就等于把它废掉
+    const note = usageOriginNote({
+      origin: "local",
+      cloudCount: null,
+      localCount: 3,
+      cloudError: "这台设备上没登录",
+    });
+    expect(note).toContain("没登录");
+    expect(note).not.toContain("没对上");
   });
 });
