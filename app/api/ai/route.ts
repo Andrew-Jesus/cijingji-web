@@ -22,8 +22,10 @@
  *     而记账失败的代价（少一条账）远小于让用户多等一秒。
  *   · **cookie 快照要提前取。** `after()` 里请求上下文已经收摊，
  *     那时再调 `cookies()` 是错的；先 `getAll()` 拿成数组再传进去。
- *   · **记账的任何失败都吞掉。** 没有 secret key、没登录、写库报错 ——
+ *   · **记账的任何失败都吞掉。** 没配 secret key、写库报错、身份读不出来 ——
  *     全都不影响这次响应（用户早就拿到例句了），只留一行日志。
+ *     ⚠️ 但「身份读不出来」**不等于"不记账"**，只是这笔账没有主人（`user_id = null`）：
+ *     钱已经花掉了，账面上就得有它。理由见 `lib/ai/usageCloud.ts` 文件头"洞八"那段。
  */
 import { cookies } from "next/headers";
 import { after, NextResponse } from "next/server";
@@ -102,6 +104,8 @@ export async function POST(req: Request): Promise<NextResponse<AiSuccessResponse
               event: result.skipped ? "usage_persist_skipped" : "usage_persisted",
               word_id: wordId,
               written: result.written,
+              // 无主的几行单独露一面：它不是错误，但值得被看见
+              ownerless: result.ownerless,
               skipped: result.skipped,
             }),
           );

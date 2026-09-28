@@ -1,18 +1,41 @@
 /**
- * 记账上云：**只测"行是怎么拼出来的"**，不测写库。
+ * 记账上云：两层各测一半。
  *
- * 为什么不测 `persistAiUsage` 的网络那半段：
- * 那需要真 Supabase（或者一个假服务器），而它真正容易出错的地方不是"发没发出去"，
- * 是**拼行**——字段名与建表 SQL 对不对得上、失败的那几次有没有也记上、
- * 一次调用是不是只记一行。这些全是纯函数，测起来又快又稳。
+ * · **拼行**（`buildUsageRows`，纯函数）：字段名与建表 SQL 对不对得上、
+ *   失败的那几次有没有也记上、一次调用是不是只记一行。又快又稳。
+ * · **分支**（`persistAiUsage`，把两个依赖打桩掉）：哪些情况该写、哪些该跳过。
+ *   2026-09-28 补 —— 洞八（"没登录就不记账"）恰恰藏在分支里：
+ *   纯函数那半段全绿，钱却在悄悄漏记，而且**不报任何错**。
+ *   这一条教训值得记住：分支逻辑不测，闸门就整类地漏。
  *
- * 网络那半段交给"真实浏览器 + 真项目"那轮验收（B3 闸门之一：
- * 云端条数与本机条数一致），那比任何 mock 都接近事实。
+ * 至于"网络真的发出去了吗"：那需要真 Supabase，交给 B3 的端到端验收
+ * （云端条数与本机条数一致），比任何 mock 都接近事实。
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AiUsageDraft } from "./contract";
-import { buildUsageRows } from "./usageCloud";
+import type { AiUsageRow } from "./usageCloud";
+
+/**
+ * 两个依赖都要打桩。
+ *
+ * `vi.hoisted` 不能省：`vi.mock` 的工厂函数会被提升到所有 `import` 之前执行，
+ * 那时普通 `const` 还没初始化 —— 直接引用会 `ReferenceError`。
+ */
+const { insertSpy, readUserIdSpy } = vi.hoisted(() => ({
+  insertSpy: vi.fn<(rows: unknown[]) => Promise<{ error: { message: string } | null }>>(),
+  readUserIdSpy: vi.fn<() => Promise<string | null>>(),
+}));
+
+vi.mock("@/lib/supabase/admin", () => ({
+  getSupabaseAdmin: () => ({ from: () => ({ insert: insertSpy }) }),
+}));
+
+vi.mock("@/lib/supabase/server", () => ({
+  readServerUserId: readUserIdSpy,
+}));
+
+import { buildUsageRows, persistAiUsage } from "./usageCloud";
 
 const AT = new Date(2026, 8, 28, 10, 30, 0);
 
@@ -104,5 +127,71 @@ describe("buildUsageRows", () => {
     const rows = buildUsageRows({ usages: [draft(), draft(), draft()], userId: "u-1", at: AT });
     for (const r of rows) expect(r.id.startsWith("ai:")).toBe(true);
     expect(new Set(rows.map((r) => r.id)).size).toBe(3);
+  });
+
+  it("身份读不出来 → user_id 写 null，**不是不写**（洞八）", () => {
+    const [row] = buildUsageRows({ usages: [draft()], userId: null, at: AT, newId: seqIds() });
+    expect(row.user_id).toBeNull();
+  });
+});
+
+describe("persistAiUsage —— 哪些该写、哪些该跳过", () => {
+  beforeEach(() => {
+    insertSpy.mockReset();
+    insertSpy.mockResolvedValue({ error: null });
+    readUserIdSpy.mockReset();
+    readUserIdSpy.mockResolvedValue("u-1");
+  });
+
+  it("**没登录也必须写**（§8.3 硬约束：没有用户也要记）", async () => {
+    readUserIdSpy.mockResolvedValue(null);
+
+    const r = await persistAiUsage([draft()], [], AT);
+
+    // 这一条红了 = 又退回了"没登录就不记账"，成本会从账面上悄悄消失
+    expect(insertSpy).toHaveBeenCalledTimes(1);
+    expect(r.skipped).toBeNull();
+    expect(r.written).toBe(1);
+    expect(r.ownerless).toBe(1);
+
+    const rows = insertSpy.mock.calls[0][0] as AiUsageRow[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].user_id).toBeNull();
+    expect(rows[0].cost_cny).toBe(0.00042); // 钱数照记，一个字都不能少
+  });
+
+  it("有身份时落在本人名下，且不算无主", async () => {
+    const r = await persistAiUsage([draft()], [], AT);
+
+    const rows = insertSpy.mock.calls[0][0] as AiUsageRow[];
+    expect(rows[0].user_id).toBe("u-1");
+    expect(r.ownerless).toBe(0);
+    expect(r.skipped).toBeNull();
+  });
+
+  it("失败的那几次也要写进去（不能只记成功的）", async () => {
+    const r = await persistAiUsage([draft(), draft({ ok: false, cost_cny: 0 })], [], AT);
+
+    const rows = insertSpy.mock.calls[0][0] as AiUsageRow[];
+    expect(rows).toHaveLength(2);
+    expect(rows[1].ok).toBe(false);
+    expect(r.written).toBe(2);
+  });
+
+  it("一次调用都没发生 → 不写（这是**允许**跳过的情况之一，另不许再加）", async () => {
+    const r = await persistAiUsage([], [], AT);
+
+    expect(insertSpy).not.toHaveBeenCalled();
+    expect(r.skipped).toBe("no_call_happened");
+  });
+
+  it("写库报错 → 吞掉，只留一句说明（用户不该看见记账失败）", async () => {
+    insertSpy.mockResolvedValue({ error: { message: "boom" } });
+
+    const r = await persistAiUsage([draft()], [], AT);
+
+    expect(r.written).toBe(0);
+    expect(r.ownerless).toBe(0);
+    expect(r.skipped).toContain("insert_failed");
   });
 });
