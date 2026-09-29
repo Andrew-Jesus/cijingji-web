@@ -12,8 +12,13 @@
  *      用户的耐心比模型的面子值钱。
  *   ③ **错误分三类**（网络 / 超时 / HTTP），因为**要不要重试取决于类别**：
  *      超时和网络抖动值得重试一次；401/400 这种重试一百次也一样，还白花钱。
+ *   ④ **按档压住"思考"**（2026-09-29 补的一课）。现在 flash 档默认开思考，
+ *      而思考和正文**共用 `max_tokens`、思考 token 还按输出价计费**；
+ *      预算被吃光时正文**静默返回空**（HTTP 200、不报错）。
+ *      所以每条请求都按 `spec.thinkingControl` 决定"要不要叫它别想"，
+ *      并把 `finish_reason === "length"` + 空正文这个签名单独报出来 —— 见下方解析处。
  */
-import { MAX_OUTPUT_TOKENS, type ModelSpec } from "./config";
+import type { ModelSpec } from "./config";
 
 export interface ChatUsage {
   input_tokens: number;
@@ -103,21 +108,50 @@ export interface CallOptions {
   temperature?: number;
 }
 
-export async function callChatCompletion(
+/**
+ * 拼请求体。**抽成纯函数是为了能被单测钉住** ——
+ * 这里的字段名逐家不同，写错一个取值本地不会报任何错，
+ * 只会在线上变成 400、把整档打废（而日志里只看到"这一档失败"）。
+ */
+export function buildRequestBody(
   spec: ModelSpec,
   messages: { role: "system" | "user"; content: string }[],
   opts: CallOptions,
-): Promise<ChatCallResult> {
-  const body = {
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
     model: spec.model,
     messages,
     // JSON 模式：两家都支持，能挡掉"前面先写一句客气话"这类格式噪声
     response_format: { type: "json_object" },
     // 0.7：例句需要一点变化（同一个词两次别写出同一句），但不能飘到跑题
     temperature: opts.temperature ?? 0.7,
-    max_tokens: opts.maxTokens ?? MAX_OUTPUT_TOKENS,
+    // 预算**按档算**（`spec.maxOutputTokens`）—— 关不掉思考的档要更大的值，
+    // 否则思考链把预算吃光、正文返回空（理由见 `config.ts` 的「思考模式」）
+    max_tokens: opts.maxTokens ?? spec.maxOutputTokens,
     stream: false,
   };
+
+  // 「别想那么多」—— 机械活不需要推理，而思考会吃预算、按输出价计费、还更慢。
+  // ⚠️ 参数名**逐家不同**，下面两条都是照官方文档逐字核过的（2026-09-29）：
+  //   · DeepSeek：关闭 = `{"thinking": {"type": "disabled"}}`。
+  //     它**不认** `reasoning_effort: "none"` —— 官方参数表里 `reasoning_effort`
+  //     只有 low / high / max（`none` 是另一套接口格式的取值）。
+  //     往一个"已知字段"喂非法值，最坏会被 400 拒收 → 这一档当场废掉。
+  //   · 智谱 GLM-5.3：**关不掉**（传 `thinking.type: "disabled"` 会直接报错），
+  //     只能用 `reasoning_effort: "low"` 把默认的 `max` 压下来。
+  // 传错参数 = 400 = 这一档当场废掉，所以这个开关留在登记表里按档取值，别散到调用处。
+  if (spec.thinkingControl === "thinking_disabled") body.thinking = { type: "disabled" };
+  else if (spec.thinkingControl === "reasoning_effort_low") body.reasoning_effort = "low";
+
+  return body;
+}
+
+export async function callChatCompletion(
+  spec: ModelSpec,
+  messages: { role: "system" | "user"; content: string }[],
+  opts: CallOptions,
+): Promise<ChatCallResult> {
+  const body = buildRequestBody(spec, messages, opts);
 
   let res: Response;
   try {
@@ -164,8 +198,22 @@ export async function callChatCompletion(
   const first = Array.isArray(choices) ? asRecord(choices[0]) : null;
   const message = first ? asRecord(first.message) : null;
   const content = message ? message.content : null;
+  const finishReason = first && typeof first.finish_reason === "string" ? first.finish_reason : null;
 
   if (typeof content !== "string" || content.trim() === "") {
+    // ★「思考吃满预算」的签名：**被截断（length）+ 正文为空**。
+    // 这是 2026-09-29 花半天才认出来的病 —— 接口 HTTP 200、不报错，
+    // 只是模型把整份 max_tokens 都花在 `reasoning_content` 上，正文一个字没写。
+    // 单独认它，是为了让日志一眼看出"该加预算 / 该关思考"，
+    // 而不是笼统报一句"没有可用文本"再让人去猜。
+    if (finishReason === "length") {
+      throw new ProviderError(
+        "malformed",
+        `模型把输出预算（max_tokens=${spec.maxOutputTokens}）都花在"思考"上，正文没写出来 —— ` +
+          `这一档要么加大输出预算，要么关掉思考。`,
+        null,
+      );
+    }
     throw new ProviderError("malformed", "响应里没有可用的文本内容", null);
   }
 

@@ -4,7 +4,6 @@ import {
   DEFAULT_COOLDOWN_MS,
   DEFAULT_RETRY_BACKOFF_MS,
   DEFAULT_TIMEOUT_MS,
-  FREE_TIMEOUT_MS,
   type EnvLike,
 } from "./config";
 import type { WordFacts } from "./prompt";
@@ -132,7 +131,7 @@ describe("链路顺序：例句先走 DeepSeek", () => {
     ]);
 
     expect(calls.map((c) => c.provider)).toEqual(["deepseek", "deepseek", "glm"]);
-    expect(out.model).toBe("glm-4.7-flash");
+    expect(out.model).toBe("glm-5.3-flash");
     expect(out.degraded).toBe(true);
     expect(out.notes[0]).toContain("首选档没成");
   });
@@ -152,12 +151,12 @@ describe("退避重试：那个「兜底档每次都失败」的坑", () => {
 
     expect(calls.map((c) => c.provider)).toEqual(["deepseek", "glm"]);
     expect(waits).toEqual([]); // 换档不需要等
-    expect(out.model).toBe("glm-4.7-flash");
+    expect(out.model).toBe("glm-5.3-flash");
   });
 
   it("已经是最后一档还撞限流 → 退避后再试一次（总不能把这一句直接丢了）", async () => {
     const { out, calls, waits } = await run([{ kind: "err", err: http(429) }, { kind: "ok" }], {
-      env: { GLM_API_KEY: "g" }, // 只有免费档一条
+      env: { GLM_API_KEY: "g" }, // 只配了 GLM 一条
     });
 
     expect(calls.map((c) => c.provider)).toEqual(["glm", "glm"]);
@@ -208,7 +207,7 @@ describe("冷却：别在已经死掉的档上白等", () => {
     const second = await run([{ kind: "ok" }], { cooldown });
 
     expect(second.calls.map((c) => c.provider)).toEqual(["glm"]);
-    expect(second.out.model).toBe("glm-4.7-flash");
+    expect(second.out.model).toBe("glm-5.3-flash");
     expect(second.out.attempts[0].error).toContain("冷却中");
   });
 
@@ -220,7 +219,7 @@ describe("冷却：别在已经死掉的档上白等", () => {
 
     expect(second.calls).toHaveLength(1);
     expect(second.out.usages).toHaveLength(1);
-    expect(second.out.usages[0].model).toBe("glm-4.7-flash");
+    expect(second.out.usages[0].model).toBe("glm-5.3-flash");
   });
 });
 
@@ -254,7 +253,7 @@ describe("总预算：宁可给模板句，也不让用户干等", () => {
   });
 });
 
-describe("超时按档算：免费档卡住时不再白等 12 秒", () => {
+describe("超时按档算：每档各拿各的等待窗口", () => {
   const fourFails: Step[] = [
     { kind: "err", err: http(500) },
     { kind: "err", err: http(500) },
@@ -262,14 +261,15 @@ describe("超时按档算：免费档卡住时不再白等 12 秒", () => {
     { kind: "err", err: http(500) },
   ];
 
-  it("同一条链上，GLM 的等待窗口比 DeepSeek 短（免费档并发 1，陪它多等基本是白等）", async () => {
+  it("链上两档都按自己的档位取超时（现在都是付费档 → 都是 12 秒）", async () => {
+    // 2026-09-29 之前 GLM 是免费档，拿的是 4 秒短窗口（免费档并发 1，陪它多等基本是白等）。
+    // 升成付费档后窗口对齐到 12 秒 —— 但"按档算"这个机制本身没变，见下一条。
     const { calls } = await run(fourFails);
 
     const ds = calls.find((c) => c.provider === "deepseek");
     const glm = calls.find((c) => c.provider === "glm");
     expect(ds?.timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
-    expect(glm?.timeoutMs).toBe(FREE_TIMEOUT_MS);
-    expect(glm!.timeoutMs).toBeLessThan(ds!.timeoutMs);
+    expect(glm?.timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
   });
 
   it("单独给某一档设超时真的会传到底层调用（AI_TIMEOUT_GLM_MS）", async () => {
@@ -286,14 +286,15 @@ describe("记账与兜底", () => {
 
     expect(out.usages).toHaveLength(2);
     expect(out.usages[0]).toMatchObject({ model: "deepseek-flash", input_tokens: 0, ok: false });
-    expect(out.usages[1]).toMatchObject({ model: "glm-4.7-flash", input_tokens: 100, ok: true });
+    expect(out.usages[1]).toMatchObject({ model: "glm-5.3-flash", input_tokens: 100, ok: true });
   });
 
-  it("免费的 GLM 记成 0 元，但标记为**已计价**（0 元是真免费，不是「没查到价」）", async () => {
+  it("GLM 升成付费档后按 5.3 的价目计价（`priced: true` = 真的查到了价）", async () => {
     const { out } = await run([{ kind: "ok" }], { env: { GLM_API_KEY: "g" } });
 
-    expect(out.usages[0].cost_cny).toBe(0);
+    expect(out.usages[0].model).toBe("glm-5.3-flash");
     expect(out.usages[0].priced).toBe(true);
+    expect(out.usages[0].cost_cny).toBeGreaterThan(0);
   });
 
   it("两档都不成 → 模板句，并如实说明原因", async () => {

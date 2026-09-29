@@ -22,6 +22,40 @@
  * （`TIER_ORDER` / `AI_TASK_TIER`），业务代码一行不用动。
  * （"免费档单独设更短超时"已经在 2026-09-25 落地，见 `resolveTimeoutMsFor`。）
  *
+ * ── 思考模式：2026-09-29 补上的一课（**动这条链之前先读这段**）──────
+ * 现在主流「flash」档**默认开启思考**：模型先写一段内部推理（`reasoning_content`），
+ * 再写正文（`content`）。要命的是 —— **两者共用同一个 `max_tokens` 预算，
+ * 而且思考 token 按输出价计费**。
+ *
+ * 对"写一句例句"这种"读题 → 吐 JSON"的机械活，思考是纯浪费。更糟的是：
+ * **预算被思考吃光时，正文会静默返回空**（HTTP 200、不报错、`finish_reason: "length"`），
+ * 我们的代码只会看到"没有可用文本" → 判定这一档失败 → 换档。
+ * 于是**成功率凭空掉一半**，而日志里看不出任何异常。
+ *
+ * 线上实测（2026-09-29，云端账目 29 条）：
+ *   · `deepseek-flash` 成功率仅 **约 53%**（8 成 / 7 败）；
+ *   · 成功那几发 `output_tokens` 打在 **180 / 180 / 172**（撞满上限），
+ *     而正常只需 **35 / 43 / 45** —— 这就是"思考吃满预算"的签名；
+ *   · 撞满那发花 **¥0.001226**，正常那发 **¥0.000383** → **贵 3 倍多**。
+ *
+ * 所以每一档都必须登记「怎么让它少想」（`ProviderDef.thinkingControl`）：
+ *   · `"thinking_disabled"` —— **能彻底关掉**（发 `{"thinking":{"type":"disabled"}}`，
+ *     DeepSeek 支持），机械活首选；
+ *   · `"reasoning_effort_low"` —— **关不掉，只能压低**（GLM-5.3 系列
+ *     `thinking.type` 只认 `enabled`，传 `disabled` 会直接报错；只能发
+ *     `reasoning_effort: "low"` 把默认的 `max` 压下来）→
+ *     这类档**必须单独配一个大输出预算**，否则思考把预算吃光、正文照样是空的。
+ *
+ * ⚠️ **两家的参数名是相反的**（2026-09-29 现查官方文档确认）：
+ *     DeepSeek 走 `thinking.type`，GLM 走 `reasoning_effort`。
+ *     而且 DeepSeek 的 `reasoning_effort` **只认 low/high/max、没有 `none`** ——
+ *     `none` 是另一套接口格式（Responses API）的取值，混用有被 400 拒收的风险。
+ *     具体拼装见 `provider.ts` 的 `buildRequestBody`，那里有单测钉着。
+ *
+ * ⚠️ 这不是"省钱优化"，是**可用性底线**：不处理它，等于一半请求白跑一轮。
+ * 配套判据 —— `finish_reason === "length"` 且正文为空，就是"思考吃满预算"的签名
+ * （`provider.ts` 已按它给出专门报错）。
+ *
  * ── Key 的边界（硬约束，踩过坑）──────────────────────────────
  * 这个文件只在**服务端**被 import（`app/api/ai/route.ts` 那条链路）。
  * 前端组件、客户端组件、`NEXT_PUBLIC_*` 里永远不许引用它 —— 一旦被前端引用，
@@ -49,6 +83,22 @@ export type AiTaskTier = "cheap" | "standard";
 
 export type ProviderId = "deepseek" | "glm";
 
+/**
+ * 怎么让这一档「少想」—— 详见文件头「思考模式」那一段。
+ *
+ * - `"thinking_disabled"`：**能彻底关掉** —— 发 `{"thinking":{"type":"disabled"}}`
+ *   （DeepSeek 支持，见官方「Thinking Mode」参数表）。机械活首选。
+ * - `"reasoning_effort_low"`：**关不掉，只能压低** —— 发 `reasoning_effort: "low"`
+ *   （GLM-5.3 系列只认 low/high/max 且默认最贵的 max；传 `thinking.type:"disabled"` 会报错）
+ *   → **必须配大预算**。
+ * - `null`：不用管（非思考模型）。
+ *
+ * ⚠️ **两者的参数名恰好相反，别想当然**：DeepSeek 用 `thinking`，GLM 用 `reasoning_effort`。
+ * 而且 DeepSeek 的 `reasoning_effort` **没有 `none` 这个取值** ——
+ * 想关思考必须走 `thinking.type`，写成 `reasoning_effort:"none"` 有被 400 拒收的风险。
+ */
+export type ThinkingControl = "thinking_disabled" | "reasoning_effort_low" | null;
+
 export interface ProviderDef {
   id: ProviderId;
   /** 人话名字，只用于日志与排查，**不参与任何判断**（判断只认 id） */
@@ -70,6 +120,15 @@ export interface ProviderDef {
    * 应该痛快换下一档，而不是在同一档上硬碰。
    */
   free: boolean;
+  /** 怎么让这一档少想（见文件头「思考模式」）。`null` = 这一档不用处理 */
+  thinkingControl: ThinkingControl;
+  /**
+   * 这一档的输出预算（`max_tokens`）。不填 = 用全局 `MAX_OUTPUT_TOKENS`。
+   *
+   * 只有**关不掉思考**的档才需要单独给一个大值 —— 思考链要把预算吃在前面，
+   * 给它 180 等于注定返回空（这正是 DeepSeek 2026-09-29 踩的那个坑）。
+   */
+  defaultMaxOutputTokens?: number;
 }
 
 /**
@@ -79,9 +138,8 @@ export interface ProviderDef {
  * 模型名的来历：
  *   · DeepSeek 在 2026 年 9 月把 Flash 的规范名换成了 `deepseek-flash`，
  *     旧名 `deepseek-v4-flash` 仍被接受（同名模型承接、按 Flash 价计费）。
- *   · 智谱 `glm-4.7-flash` 长期免费，但**并发 1**，高峰期会被挤掉。想换成付费的稳定档，
- *     把 `AI_MODEL_GLM` 改成 `glm-5.3-flash` 即可（0.8 / 2.8 元每百万 token，限时五折），
- *     一行环境变量的事，代码不用改。
+ *   · 智谱 `glm-4.7-flash` 长期免费，但**并发 1** —— 2026-09-29 线上实测
+ *     **14 次尝试 0 次成功**（白天必撞 429），已换成付费档 `glm-5.3-flash`。
  *     ⚠️ 别用 `glm-4.7-flashX` —— 那是国际站（Z.ai）的型号，国内站价格页上根本没有这个。
  */
 export const PROVIDERS: Record<ProviderId, ProviderDef> = {
@@ -95,6 +153,10 @@ export const PROVIDERS: Record<ProviderId, ProviderDef> = {
     defaultModel: "deepseek-flash",
     defaultBase: "https://api.deepseek.com",
     free: false,
+    // V4-Flash 起默认开思考，但**能彻底关掉**（发 `thinking:{type:"disabled"}`）。
+    // 例句这种机械活关掉最划算：预期输出 token 从 180（撞满上限）掉到 35~45，
+    // 成本降 3~5 倍，成功率回到正常。
+    thinkingControl: "thinking_disabled",
   },
   glm: {
     id: "glm",
@@ -103,9 +165,19 @@ export const PROVIDERS: Record<ProviderId, ProviderDef> = {
     modelEnv: "AI_MODEL_GLM",
     baseEnv: "AI_BASE_GLM",
     timeoutEnv: "AI_TIMEOUT_GLM_MS",
-    defaultModel: "glm-4.7-flash",
+    // 2026-09-29：免费档 `glm-4.7-flash` → 付费档 `glm-5.3-flash`。
+    // 起因就是上面那条：免费档**并发只有 1**，白天几乎必挂；付费档不限流。
+    // 价格 0.8 / 2.8 元每百万 token —— 比 DeepSeek 的普通输入（1.0）还便宜，
+    // 而 DeepSeek 高峰要翻倍，差距更大。
+    defaultModel: "glm-5.3-flash",
     defaultBase: "https://open.bigmodel.cn/api/paas/v4",
-    free: true,
+    free: false,
+    // ⚠️ GLM-5.3 系列**关不掉思考**（`thinking.type` 只认 enabled，传 disabled 会报错），
+    // 只能用 `reasoning_effort: "low"` 压一压 → 所以它必须配大输出预算（见下）。
+    thinkingControl: "reasoning_effort_low",
+    // 思考链要吃掉大部分预算，给 180 等于注定返回空（就是 DeepSeek 踩的那个坑）。
+    // 2048 是"思考 + 一句例句正文"都装得下的量。
+    defaultMaxOutputTokens: 2048,
   },
 };
 
@@ -175,14 +247,19 @@ export const DEFAULT_TOTAL_BUDGET_MS = 20_000;
 export const MIN_ATTEMPT_MS = 2_500;
 
 /**
- * 生成一句例句的输出上限。
+ * **「关得掉思考」的档**生成一句例句的输出上限（也是全局默认值）。
  *
  * 定 180 的依据：提示词已经把内容框死了（sentence 6~16 词、gloss ≤30 字），
- * 一次合格输出实测约 60~90 token，180 留了整整一倍余量。
+ * 一次合格输出实测约 35~90 token，180 留了充裕余量。
  *
  * 为什么不给更大：**输出长度直接就是等待时间**。上限放太宽时，模型真的会"先想再答"、
  * 多写一段；而写超了会被截断，JSON 就不合法 → 反而降级成模板句，两头都亏。
- * 180 是同时兜住这两头的数。
+ *
+ * ⚠️ **2026-09-29 加的重要限定**：这个数**只对"关得掉思考"的档成立**
+ * （DeepSeek 关掉思考后输出约 35~45 token，180 绰绰有余）。
+ * 对**关不掉思考**的档（GLM-5.3 系列），思考链自己就要吃掉几百上千 token，
+ * 给 180 等于注定返回空 —— 那种档必须在 `PROVIDERS` 里单独配 `defaultMaxOutputTokens`。
+ * 一句话记住：**"输出预算给多少"取决于"这一档会不会思考"**。
  */
 export const MAX_OUTPUT_TOKENS = 180;
 
@@ -261,6 +338,13 @@ export interface ModelSpec {
    * 调用方（`run.ts`）不必自己再查环境变量 —— 少一处"忘了按档算"的机会。
    */
   timeoutMs: number;
+  /**
+   * 这一档的输出预算（`max_tokens`）。**随档位一起解析好带下来**，理由同上：
+   * 关不掉思考的档要更大的值，让调用方自己判断就是给"又踩一次空返回"留口子。
+   */
+  maxOutputTokens: number;
+  /** 怎么让这一档少想。**已解析好的指令**，`provider.ts` 照做即可，不再做判断 */
+  thinkingControl: ThinkingControl;
 }
 
 function readEnv(env: EnvLike, key: string): string | undefined {
@@ -292,6 +376,8 @@ export function resolveModelChain(
       apiKey,
       free: def.free,
       timeoutMs: resolveTimeoutMsFor(def.id, env),
+      maxOutputTokens: def.defaultMaxOutputTokens ?? MAX_OUTPUT_TOKENS,
+      thinkingControl: def.thinkingControl,
     });
   }
   return chain;
