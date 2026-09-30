@@ -25,8 +25,29 @@
  * 各档**不许**写成几个组件按状态条件渲染 —— 那样用户看到的是"旧的消失 + 新的出现"，
  * 那是弹窗，不是灵动岛。所以：
  *   · **承载材料只有一个**，就是下面那个 `<button>` 本身，尺寸与圆角都在它身上做过渡；
- *   · 内容（环 / 文字 / 横幅 / 进度条）是它的孩子，在形变**后半段**才淡入；
- *   · 卡片（面板）是另一块东西，不是材料 —— 面板开着时它仍然是胶囊（面板的"把手"）。
+ *   · 内容（表圈 / 环 / 文字 / 横幅）是它的孩子，在形变**后半段**才淡入；
+ *   · 卡片（面板）是另一块东西，不是材料 —— 面板开着时它仍然是那颗球（面板的"把手"）。
+ *
+ * ── ★ 球 ⇄ 岛：厚度恒定，只有长度在变（2026-09-30 Andy 定）──────
+ * 日常那一档回到**最初那颗正圆球**（深墨圆盘 + 银「词」+ 表圈进度环）；
+ * 拉长之后是**同一根东西**变长 —— 四档厚度都是 44、圆角恒为 22，
+ * 所以形变期间真正在动的只有 `width` 一个属性。规则与理由写在
+ * `lib/island/form.ts` 的文件头（那里有单测钉着，别再手改厚度）。
+ *
+ * ── 材质：一块「墨 + 银」，与 App 图标同一套打光（2026-09-30 续）────
+ * 它不是一块平色，而是**一块有厚度的墨**。材质与银字收在两个类里
+ * （`.island-material` / `.island-silver`，见 globals.css），色值照抄
+ * `scripts/gen-app-icon.py` —— 界面里的球和桌面上的图标本该是同一种东西。
+ * 规矩只有一条：**光源固定在左上**，于是
+ *   底盘左上受光、右下背光；上沿与左沿各被扫到一道（往右下化开）；
+ *   字是竖直的缎面银（上亮下暗）。
+ * 这条同样适用于**拉长之后的岛** —— 岛不是"另做一块深色条子"，
+ * 它和球是同一块材料，所以银字与打光一路带过去，形变时才不像换了东西。
+ *
+ * 在此之上还有**一道会动的光**：
+ *   · **拉长时的银光**（`--island-sheen`）：顺着被拉出来的方向扫过去，
+ *     一瞥即逝。它和中段收细是**同一批触发**（只在变宽那一步演一次），
+ *     时长各自独立（见 `SHEEN_MS`）。
  *
  * ── 位置为什么整段改用 `transform: translate()`（2026-09-26）──
  * 角落那套是 `bottom` 锚、台上那套天然是 `top` 锚，而 CSS 里 `auto → 长度` **不能过渡**，
@@ -69,6 +90,7 @@ import { ensureSeeded } from "@/lib/db/seed";
 import {
   BANNER_HOLD_MS,
   LIVE_HOLD_MS,
+  SHEEN_MS,
   SQUASH_MS,
   bannerNotice,
   islandBox,
@@ -87,9 +109,9 @@ import {
 } from "@/lib/island/stage";
 
 import { ConsolePanel } from "./ConsolePanel";
+import { IslandBall } from "./IslandBall";
 import { IslandBanner } from "./IslandBanner";
-import { IslandLive } from "./IslandLive";
-import { IslandPill } from "./IslandPill";
+import { IslandStretch } from "./IslandStretch";
 
 /** 按住多久算长按（开/关开发者模式）。一旦开始拖拽就把计时器清掉 */
 const LONG_PRESS_MS = 600;
@@ -172,7 +194,15 @@ export function ConsoleDock() {
   // ── 结论：形态 / 家 / 面板（规则全在三个纯函数里，都有单测）──────
   /** 用户主动收起了（只留一颗小点，点一下能请回来） */
   const tucked = prefs.hidden;
-  /** 背词进行中 —— 材料淡下去一点，少抢注意力 */
+  /**
+   * 背词进行中 —— 材料淡下去一点，少抢注意力。
+   *
+   * ⚠️ **2026-09-30 从 70% 调到 88%（Andy 选的 B 案）。**
+   * 70% 的时候，岛的深墨被冲成中灰、银字从"金属"变成"浅灰字"。而**岛只可能出现在
+   * 背词页**（`/study` 是唯一的 `mini` 路由），所以岛永远带着这层淡 —— 那不是材质写错了，
+   * 是这层淡造成的（实测 A/B：球 100% 是 `rgb(44–70)`、岛 70% 是 `rgb(101–126)`）。
+   * 88% 之后墨色与银字都保得住，比首页那颗球仍然收敛。
+   */
   const mini = !tucked && presentation === "mini";
   /** 动效降级（微信 UA / 系统"减少动态效果"） */
   const motionReduced = runtime?.motionReduced === true;
@@ -199,9 +229,17 @@ export function ConsoleDock() {
   const stage = stageFor({ ...formInput, motionReduced });
 
   const banner = shape === "banner" ? speakable : null;
-  /** 有进度数字可报吗 —— 决定胶囊宽一档（环 + 字）还是窄一档（只放「词」） */
-  const hasProgressText = today !== null && today.total > 0;
-  const box = islandBox(shape, { hasProgressText });
+  const box = islandBox(shape);
+  /**
+   * 内容要不要左右镜像。
+   *
+   * 材料贴着右边时，它是往**左**长的 —— 这时球里那圈环必须跟着贴到右边摆，
+   * 否则拉长的一瞬间它会"啪"地从右端跳到左端（跨两百多像素），
+   * 那正是"不无缝"的典型症状。理由详见 `IslandStretch` 文件头。
+   *
+   * 登台那一档（横幅）永远水平居中、文案左对齐，所以不镜像。
+   */
+  const mirror = stage === "corner" && prefs.spot.side === "right";
   /** 面板往哪边长。**这是"面板会不会跑出屏幕"的唯一开关**（规则在 stage.ts，有单测） */
   const panelSide = panelSideForStage(stage, prefs.spot.ratio);
   /** 内容从哪一侧滑出来 */
@@ -510,7 +548,22 @@ export function ConsoleDock() {
       : null),
   };
 
-  const materialClass = `bg-ink focus-visible:ring-brand-600 focus-visible:ring-offset-page relative block touch-none select-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none ${
+  /**
+   * 「银光扫过」的动画名。
+   *
+   * 它与中段收细**同一批触发**（都只在"变宽"那一步演一次），所以直接复用
+   * `squashSeq` 的奇偶去换名字 —— 少一个状态，就少一处会各走各的地方。
+   * 时长各自独立：银光比形变更长一截（见 `SHEEN_MS`）。
+   *
+   * ⚠️ 那条光的**基线 opacity 必须是 0**：没有动画时它就静静待在材料左端，
+   * 而它是一道白色半透明的条子 —— 停在那儿就是一条贴在脸上的脏痕。
+   */
+  const sheenAnim =
+    squashSeq > 0 && motion.sheen
+      ? `${squashSeq % 2 === 0 ? "island-sheen-a" : "island-sheen-b"} ${SHEEN_MS}ms var(--ease-soft)`
+      : null;
+
+  const materialClass = `island-material focus-visible:ring-brand-600 focus-visible:ring-offset-page relative block touch-none select-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none ${
     alerting ? "shadow-alert" : "shadow-float"
   }`;
 
@@ -591,7 +644,7 @@ export function ConsoleDock() {
           data-island-shape={shape}
           data-island-material
           style={materialStyle}
-          className={`${materialClass} rounded-full ${mini ? "opacity-70" : "hover:scale-105"}`}
+          className={`${materialClass} rounded-full ${mini ? "opacity-[0.88]" : "hover:scale-105"}`}
         >
           {hitPad}
 
@@ -600,22 +653,44 @@ export function ConsoleDock() {
             形变时它不用另做过渡，圆角天然同步（也就不会在动画中间露直角）。
           */}
           <span className="absolute inset-0 overflow-hidden" style={{ borderRadius: "inherit" }}>
-            <IslandPill
-              visible={shape === "dot" || shape === "pill"}
+            <IslandBall
+              visible={shape === "ball"}
               delayMs={motion.contentDelayMs}
               slidePx={slidePx}
               progress={today}
             />
-            <IslandLive
-              visible={shape === "live"}
+            <IslandStretch
+              visible={shape === "island"}
               delayMs={motion.contentDelayMs}
               slidePx={slidePx}
               progress={today}
+              mirror={mirror}
             />
-            <IslandBanner
-              notice={banner}
-              delayMs={motion.contentDelayMs}
-              slidePx={slidePx}
+            <IslandBanner notice={banner} delayMs={motion.contentDelayMs} slidePx={slidePx} />
+          </span>
+
+          {/*
+            材料表面那层 —— 只负责**拉长时的银光**。
+            它排在内容之后（盖在最上面）：反光本来就该在**表面**，不是垫在内容底下。
+
+            内缘那道上沿高光**已经交给材料自己的材质**了（`.island-material` 的三层背景里
+            最上面一层就是它，见 globals.css）。所以这里不再画 `inset` 描边 ——
+            两处都画就成了"描了一条线"，正是图标脚本第 10 条警告的那种"脏"。
+          */}
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 overflow-hidden"
+            style={{ borderRadius: "inherit" }}
+          >
+            <span
+              data-island-sheen
+              className="absolute inset-y-0 left-0 w-[34%]"
+              style={{
+                opacity: 0,
+                background:
+                  "linear-gradient(90deg, transparent, var(--island-sheen), transparent)",
+                ...(sheenAnim ? { animation: sheenAnim } : null),
+              }}
             />
           </span>
 

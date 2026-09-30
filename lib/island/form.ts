@@ -1,13 +1,25 @@
 /**
  * 小词的形态决策 —— 纯逻辑层
  *
- * 只回答一个问题：**这一刻它该长什么样**。五个答案：
+ * 只回答一个问题：**这一刻它该长什么样**。答案四档（外加一档不是材料的）：
  *
- *   dot     一颗小点（热区 44，看得见的只有 16）—— 值班中，不说话
- *   pill    胶囊（高 44，宽 108 或 164）——        日常常驻，扫一眼看见进度
- *   live    紧凑岛（高 48，宽 240）——             有件正在跑的事，报实时进度（**登台**）
- *   banner  横幅（高 58，近整屏宽）——             它要说话了（**登台**）
- *   card    卡片（宽 320）——                      你点开了，看细节
+ *   dot     一颗小点（热区 44，看得见的只有 16）—— 收起了 / 不该露面
+ *   ball    正圆（44 × 44）——                     日常待命。银「词」+ 表圈进度环
+ *   island  岛（240 × 44）——                      有件正在跑的事，报实时进度
+ *   banner  横幅（近整屏宽 × 44）——                它要说话了（**登台**）
+ *   card    卡片 —— **不是材料**，是面板；见 `islandShape`
+ *
+ * ── ★ 唯一一条形态硬规则：厚度恒定，只有长度在变（2026-09-30 与 Andy 定）──
+ * 这是"**球和岛是同一块材料**"这件事的数学底子，不是修辞：
+ *
+ *   · **所有非 dot 档的厚度都等于 `THICKNESS_PX`（44）**；
+ *   · 圆角恒为 `厚度 ÷ 2` → 于是**圆角在整场形变里是个常量（22）**；
+ *   · 于是形变期间**只有 `width` 一个属性在动** ——
+ *     正圆就是"长度恰好等于厚度"的那一档，岛就是同一根东西被拉开。
+ *
+ * ⚠️ 这条是**实测之后**立的，别凭手感改回去：改造前各档厚度是 44 / 48 / 58，
+ * 拉长时**又长又胖**，眼睛读到的是"变大了 / 换了个东西"，而不是"被拉开"。
+ * 要动厚度，先回来读这一段，并同步 `form.test.ts` 里那条不变量断言。
  *
  * ── 为什么不跟另外两件事合成一个函数 ─────────────────────────
  *   「该不该露面」＝ 页面规则 → `lib/console/dock.ts` 的 `dockPresentation()`（保留不动）
@@ -22,7 +34,7 @@
  *
  * ── 与苹果的第二条对照：常驻的那一枚**不宽**（2026-09-26）──────
  * 苹果的 Live Activity（外卖配送中）是一枚**不宽的小胶囊**：左边图标、右边剩余量。
- * 所以"报实时进度"是 `live`（240），不是把 `banner`（近满屏）拿来天天挂头顶。
+ * 所以"报实时进度"是 `island`（240），不是把 `banner`（近满屏）拿来天天挂头顶。
  *
  * ── 为什么宽度是固定档位，不是自适应 ──────────────────────────
  * CSS 没法给 `width: auto` 做过渡动画。让内容撑开宽度的话，形变时会"啪"地跳一下 ——
@@ -38,7 +50,7 @@ import type { CSSProperties } from "react";
 import type { DockPresentation } from "@/lib/console/dock";
 import type { Notice } from "@/lib/console/notices";
 
-export type IslandForm = "dot" | "pill" | "live" | "banner" | "card";
+export type IslandForm = "dot" | "ball" | "island" | "banner" | "card";
 
 /** 岛本身的形状。`card` 不在这里 —— 卡片是面板（ConsolePanel），不是岛的材料 */
 export type IslandShape = Exclude<IslandForm, "card">;
@@ -48,24 +60,30 @@ export type IslandShape = Exclude<IslandForm, "card">;
 export const DOT_FRAME_PX = 44;
 /** Dot 档：看得见的那颗圆。比热区小得多 —— 小，就是它要说的话 */
 export const DOT_PX = 16;
-/** Pill 档：高度。圆角恒等于 高 ÷ 2，所以它看起来是个胶囊 */
-export const PILL_H_PX = 44;
-/** Pill 档：没有进度数字可报时的宽度（只放一个字） */
-export const PILL_W_RING_PX = 108;
-/** Pill 档：环 + 「今日 12 / 36」时的宽度 */
-export const PILL_W_TEXT_PX = 164;
 /**
- * Live 档：宽。
+ * ★ **材料的厚度**。**所有非 dot 档都是这个数** —— 见文件头那条硬规则。
+ *
+ * 44 不是随手取的，它有三个来头，缺一不可：
+ *   · 它是**改造前那颗球本来的直径**（`lib/console/dock.ts` 的 `BALL_PX`）——
+ *     厚度取它，球档就正好是一颗正圆，而且是用户已经认识的那颗球，一像素没挪；
+ *   · 它是 iOS 人机指南的最小触摸目标；
+ *   · 它让圆角恰好是 22 —— 圆角在整个形变过程里**不用动**。
+ */
+export const THICKNESS_PX = 44;
+/**
+ * 岛档：宽。
  *
  * **它刻意不拉满屏。** 这是跟苹果借的第二条：那边的常驻 Live Activity
  * （外卖配送中、正在录音）也是一枚**不宽的小胶囊** —— 左边图标、右边剩余量。
  * 拉满屏那一档留给"要提醒你"的消息（`banner`）：一个天天挂在头顶的巨幕会让人喘不过气。
  */
-export const LIVE_W_PX = 240;
-/** Live 档：高。比胶囊高一档，给底部那根细进度条留出位置 */
-export const LIVE_H_PX = 48;
-/** Banner 档：高度。比胶囊高一档 —— "它开口了"要看得出来 */
-export const BANNER_H_PX = 58;
+export const ISLAND_W_PX = 240;
+/**
+ * Banner 档：高度。**与其它各档同厚** ——
+ * 它多了一行副文案，但宁可把行高压紧，也不破"厚度恒定"那条：
+ * 厚度一变，横幅就是"胀大"而不是"拉长"，前面那条数学底子就白算了。
+ */
+export const BANNER_H_PX = THICKNESS_PX;
 /** Banner 档：宽度上限。窄屏用 `100vw − 2×BANNER_EDGE_PX`，电脑上别摊成一条巨幕 */
 export const BANNER_MAX_W_PX = 420;
 /** Banner 档：左右各留的边距 */
@@ -88,9 +106,9 @@ export const BANNER_HOLD_MS = 5600;
  * Live 归位的静默期（毫秒）—— "事多久待多久"就是这么实现的。
  *
  * 今日任务进度**每跳一格**，这个窗口就往后重推一次：你还在背，它就一直在；
- * 你不背了（进度不动了），12 秒后它自己回角落。
+ * 你不背了（进度不动了），12 秒后它自己缩回一颗球。
  * 这跟苹果的 Live Activity 是同一条规矩 —— "配送中"一直在，"送完了"就消失。
- * 顺带它也让"会不会永远赖在顶上"这个问题不成立。
+ * 顺带它也让"会不会永远赖在角落不缩回去"这个问题不成立。
  */
 export const LIVE_HOLD_MS = 12000;
 /**
@@ -105,8 +123,19 @@ export const SQUASH_MS = 330;
  * ⚠️ 它是 `scaleY`，属于"只动 translate / scale / opacity"的允许范围，
  * **不是 bounce**：bounce 是"位置来回弹"，这个只是"形变本身"。
  * 4.5% 是照着观感定的：看得见，但不至于让人觉得它在打哆嗦。
+ *
+ * ⚠️ 改它必须同步 `app/globals.css` 的 `--island-squash`（关键帧读那个变量），
+ * 两边飘了会"看起来没事、其实不对"。
  */
 export const SQUASH_SCALE = 0.955;
+/**
+ * 「银光扫过」的时长（毫秒）。
+ *
+ * 比形变（240ms）长一截：形变是"拉到位"，银光是"顺着被拉出来的方向滑过去"，
+ * 让它多走出一点，眼睛才接得住"这块材料被拉开了"这层暗示。
+ * 触发时机与中段收细完全相同（都只在**变宽**那一步演一次），但两者时长各自独立。
+ */
+export const SHEEN_MS = 460;
 /**
  * 内容从锚点那侧滑进来的距离（像素）。
  * 不滑动、直接原地浮现的话，看起来像"两个零件在交替"；滑一下才像同一块材料在长。
@@ -142,6 +171,10 @@ export const CARD_WIDTH_CSS = `min(${CARD_W_PX}px, 100vw - ${CARD_EDGE_PX * 2}px
  * 为什么用内联 `style` 而不是 Tailwind 类：
  * 项目在案记录过"**Tailwind 类名写错不报错、只静默失效**"，
  * 内联写错在页面上当场看得出来。（跟 `ConsoleDock` 里 `SLIDE` 是同一套写法。）
+ *
+ * 注：眼下四档里**只有 width 真的会变**（厚度恒定、圆角恒定）——
+ * height / border-radius 仍留在过渡表里，是为了 dot ⇄ ball 那一步
+ * （16 ⇄ 44，两个属性都变），以及将来万一要加档。
  */
 export const MORPH_TRANSITION = [
   "width var(--duration-slow) var(--ease-soft)",
@@ -165,7 +198,7 @@ export interface IslandFormInput {
 /**
  * 这一刻用哪一档。
  *
- * ── 优先级（2026-09-26 重排，为了 Live 档能露脸）────────────────
+ * ── 优先级（2026-09-26 重排，为了"正在跑的事"能露脸）────────────
  *   **你要看细节（open）＞ 你收起了它（tucked）＞ 页面不让露面（hidden）**
  *   ，之后分成两条路：
  *
@@ -173,12 +206,18 @@ export interface IslandFormInput {
  *       但「正在跑的任务」允许露出一枚安静的小岛 —— 见下；
  *     · **不在专注页**：提醒压过进度 —— 正在跑任务时网络断了，先报断网。
  *
- * ── 为什么 Live 能压过 mini，而 Banner 不能 ─────────────────────
+ * ── 为什么"正在跑的事"能压过 mini，而横幅不能 ───────────────────
  * 这条是 Andy 2026-09-26 点头定的。`mini` 当初的目的是"背词时别被**横幅**打断"，
- * 而 Live 档**不是打断** —— 它是一条不吵的进度条，正好呼应"你正在背、还剩多少"。
+ * 而岛档**不是打断** —— 它是一条不吵的进度，正好呼应"你正在背、还剩多少"。
  * 苹果的外卖岛在你干别的时也一直挂着。
  *
- * ⚠️ 若不这么做，Live 档就**永远看不到**：因为"今日任务进度跳一格"恰恰只发生在背词时。
+ * ⚠️ 若不这么做，岛档就**永远看不到**：因为"今日任务进度跳一格"恰恰只发生在背词时。
+ *
+ * ── 背词中为什么不缩成小点了（2026-09-30 改）───────────────────
+ * 以前 mini 给的是 `dot`（16px）。现在日常那一档**本身就是 44px 的球**、
+ * 又缩在角落，本来就不挡字；而背词恰恰是它被用得最多的时候 ——
+ * 那时候反而消失，等于"球"这个形态在**主场景**里根本不存在。
+ * "少一点打扰"改由 `ConsoleDock` 把它淡到 70% 不透明来给，不靠把它缩没。
  *
  * 其余几条的理由：
  *  · `tucked` 排在最前两位 —— 你收起了它，它就不该再长成别的样子；
@@ -190,24 +229,19 @@ export function islandForm(input: IslandFormInput): IslandForm {
   if (input.open) return "card";
   if (input.tucked) return "dot";
   if (input.presentation === "hidden") return "dot";
-  if (input.presentation === "mini") return input.live ? "live" : "dot";
+  if (input.presentation === "mini") return input.live ? "island" : "ball";
   if (input.speaking) return "banner";
-  if (input.live) return "live";
-  return "pill";
+  if (input.live) return "island";
+  return "ball";
 }
 
 /**
  * 卡片不是岛的材料 —— 它是面板（ConsolePanel）。
- * 面板开着时，岛本身仍然是一个胶囊：它是这块面板的"把手"，不该跟着变形。
- * （"胶囊胀大成卡片"是更大的改动，不在 I1 范围内。）
+ * 面板开着时，岛本身仍然是**那颗球**：它是这块面板的"把手"，不该跟着变形。
+ * （"球胀大成卡片"是更大的改动，不在 I1 范围内。）
  */
 export function islandShape(form: IslandForm): IslandShape {
-  return form === "card" ? "pill" : form;
-}
-
-/** Pill 该多宽：有进度数字就宽一档，没有就只放一个字 */
-export function pillWidth(hasProgressText: boolean): number {
-  return hasProgressText ? PILL_W_TEXT_PX : PILL_W_RING_PX;
+  return form === "card" ? "ball" : form;
 }
 
 /**
@@ -241,7 +275,7 @@ export interface IslandShapeBox {
   hitInset: number;
 }
 
-export function islandBox(shape: IslandShape, opts: { hasProgressText: boolean }): IslandShapeBox {
+export function islandBox(shape: IslandShape): IslandShapeBox {
   if (shape === "dot") {
     return {
       hitW: `${DOT_FRAME_PX}px`,
@@ -252,33 +286,39 @@ export function islandBox(shape: IslandShape, opts: { hasProgressText: boolean }
       hitInset: (DOT_FRAME_PX - DOT_PX) / 2,
     };
   }
-  if (shape === "live") {
+  // 下面三档的厚度与圆角**必须完全一致** —— 那是"被拉长"的前提（见文件头）。
+  // 写成一个共用块而不是各抄一份，就是为了让"有人偷偷改了其中一档"变得不可能：
+  // 想改只能改上面那两个常量，而它们会同时影响三档。
+  const thickness = `${THICKNESS_PX}px`;
+  const radius = `${radiusFor(THICKNESS_PX)}px`;
+
+  if (shape === "island") {
     return {
-      hitW: `${LIVE_W_PX}px`,
-      hitH: `${LIVE_H_PX}px`,
-      matW: `${LIVE_W_PX}px`,
-      matH: `${LIVE_H_PX}px`,
-      radius: `${radiusFor(LIVE_H_PX)}px`,
+      hitW: `${ISLAND_W_PX}px`,
+      hitH: thickness,
+      matW: `${ISLAND_W_PX}px`,
+      matH: thickness,
+      radius,
       hitInset: 0,
     };
   }
   if (shape === "banner") {
     return {
       hitW: BANNER_WIDTH_CSS,
-      hitH: `${BANNER_H_PX}px`,
+      hitH: thickness,
       matW: BANNER_WIDTH_CSS,
-      matH: `${BANNER_H_PX}px`,
-      radius: `${radiusFor(BANNER_H_PX)}px`,
+      matH: thickness,
+      radius,
       hitInset: 0,
     };
   }
-  const w = `${pillWidth(opts.hasProgressText)}px`;
+  // ball：**宽度 = 厚度**，所以它是一颗正圆（不是一段胶囊）。
   return {
-    hitW: w,
-    hitH: `${PILL_H_PX}px`,
-    matW: w,
-    matH: `${PILL_H_PX}px`,
-    radius: `${radiusFor(PILL_H_PX)}px`,
+    hitW: thickness,
+    hitH: thickness,
+    matW: thickness,
+    matH: thickness,
+    radius,
     hitInset: 0,
   };
 }
@@ -289,21 +329,21 @@ export function islandBox(shape: IslandShape, opts: { hasProgressText: boolean }
  * 只有高度能这么用 —— 宽度里可能出现 `min()`，取不出数值。
  * 位置算式要用它：`ratio` 是**按材料自己的高**换算的，
  * 这样无论哪一档，"0 就是贴顶、1 就是贴底"这件事都成立（实测对齐到 ±0）。
+ *
+ * 写成"只有 dot 特殊"而不是逐个列出，是**刻意的**：
+ * 厚度恒定那条硬规则因此变成了代码本身 —— 谁要破坏它，得先改这个函数。
  */
 export function islandHeight(shape: IslandShape): number {
-  if (shape === "dot") return DOT_PX;
-  if (shape === "live") return LIVE_H_PX;
-  if (shape === "banner") return BANNER_H_PX;
-  return PILL_H_PX;
+  return shape === "dot" ? DOT_PX : THICKNESS_PX;
 }
 
 /**
- * 各档的"宽窄次序"。只用来回答一个问题：**这一步是在拉长，还是在收回来**。
+ * 各档的"宽窄次序"。只用来回答一个问题：**这一步是在拉长，还是在缩回来**。
  *
  * 为什么不用真实宽度：Banner 档的宽度是 `min(100vw − 32px, 420px)`，
  * 是个表达式、取不出确定的数。而"比大小"这件事只需要次序，不需要精确到像素。
  */
-const RANK: Record<IslandShape, number> = { dot: 0, pill: 1, live: 2, banner: 3 };
+const RANK: Record<IslandShape, number> = { dot: 0, ball: 1, island: 2, banner: 3 };
 
 export function islandRank(shape: IslandShape): number {
   return RANK[shape];
@@ -312,7 +352,7 @@ export function islandRank(shape: IslandShape): number {
 /**
  * 这一步是不是"被拉长"。
  *
- * 中段收细只在这时候演 —— 往回缩的时候再收细就变成"瘪"了，
+ * 中段收细和银光扫过都只在这时候演 —— 往回缩时再收细就变成"瘪"了，
  * 那是另一回事（"内容先让开、形状再收"已经是那条过渡在管）。
  */
 export function isStretching(from: IslandShape, to: IslandShape): boolean {
@@ -332,6 +372,8 @@ export interface MotionMode {
    * 降级时**也不演** —— 它是形变的一部分，不是"淡入"那一类。
    */
   squash: boolean;
+  /** 银光扫过演不演。同上：它是形变的一部分，降级时一并关掉 */
+  sheen: boolean;
 }
 
 /**
@@ -346,7 +388,7 @@ export interface MotionMode {
  * 而是"形状立刻到位、文字轻轻浮出来"。
  */
 export function motionMode(reduced: boolean): MotionMode {
-  if (reduced) return { material: "none", contentDelayMs: 0, squash: false };
+  if (reduced) return { material: "none", contentDelayMs: 0, squash: false, sheen: false };
   return {
     material: [
       MORPH_TRANSITION,
@@ -355,6 +397,7 @@ export function motionMode(reduced: boolean): MotionMode {
     ].join(", "),
     contentDelayMs: CONTENT_DELAY_MS,
     squash: true,
+    sheen: true,
   };
 }
 

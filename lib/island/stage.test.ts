@@ -124,8 +124,8 @@ describe("materialTopExpr —— 材料上沿", () => {
   });
 
   it("★ 行程里减掉的是 `--island-h`，不是某个写死的数", () => {
-    // 各档高不同（16 / 44 / 48 / 58），位置得跟着它自己多大走。
-    // 写成字面量的话，换一档就"贴不了顶"或"贴不了底"。
+    // 各档高不同（现在只有两种：dot 16 / 其余一律 44 —— 见 form.ts 的「厚度恒定」），
+    // 位置得跟着它自己多大走。写成字面量的话，换一档就"贴不了顶"或"贴不了底"。
     const expr = materialTopExpr("corner", 1);
     expect(expr).toContain("var(--island-h)");
     expect(expr).toContain(`${TOP_LIMIT_PX + BOTTOM_MARGIN_PX}px`);

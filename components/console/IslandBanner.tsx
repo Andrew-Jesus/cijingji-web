@@ -14,6 +14,12 @@
  * 或者**点它打开面板**。右边那个 `›` 就是"点我"的暗示，它不是交互元素。
  *
  * 硬约束「每条提示必带出口，不能出现关不掉的话」因此仍然成立。
+ *
+ * ── 字也是银的（2026-09-30）──────────────────────────────────
+ * 横幅是那块材料拉得最长的一档，最容易露馅成"一条深色玻璃"。
+ * 所以它和球、和岛共用同一道银（`.island-silver`，见 globals.css）。
+ * 三处文字都是**叶子元素** —— 这是 `background-clip: text` 成立的前提
+ * （子元素上的 opacity 会让裁切失效），要淡就淡在自己身上。
  */
 import type { Notice } from "@/lib/console/notices";
 import { contentFadeStyle } from "@/lib/island/form";
@@ -38,16 +44,16 @@ export function IslandBanner({
       {notice && (
         <>
           <span className="min-w-0 flex-1">
-            <span className="text-on-ink block truncate text-[13px] leading-snug font-medium">
+            <span className="island-silver block truncate text-[13px] leading-snug font-medium">
               {notice.title}
             </span>
             {notice.detail && (
-              <span className="text-on-ink mt-0.5 block truncate text-[11px] leading-snug opacity-60">
+              <span className="island-silver mt-0.5 block truncate text-[11px] leading-snug opacity-60">
                 {notice.detail}
               </span>
             )}
           </span>
-          <span className="text-on-ink shrink-0 text-sm leading-none opacity-60">›</span>
+          <span className="island-silver shrink-0 text-sm leading-none opacity-60">›</span>
         </>
       )}
     </span>
