@@ -17,6 +17,13 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // `public/` 里放的是**原样发给浏览器的文件**，不是源码。
+    //   · `sw.js` 是 Service Worker —— 跑在浏览器的另一个执行环境里，
+    //     那里的 `self` / `caches` / `clients` 对 ESLint 来说全是"未定义变量"，
+    //     给它配一套 globals 只会制造噪音；它真正的护栏是
+    //     `lib/pwa/swContract.test.ts` 那组契约测试。
+    //   · `offline.html` 是自己管自己的兜底页（连样式都不许外引）。
+    "public/**",
   ]),
 ]);
 

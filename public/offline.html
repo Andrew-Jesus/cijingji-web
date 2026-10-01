@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN" data-page-node-id="NwM7JdvAy1sKE2Z9Gt5iRz">
+<head data-page-node-id="kX2bHPjqtGbpDD2Qmbmajg">
+<meta charset="utf-8" data-page-node-id="bKzoM2WwRTdsyCsF4NtFKQ">
+<meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="WFg1CHC06WFLPgWW0639Eo">
+<title>现在没有网络 · 词径记</title>
+<!--
+  离线兜底页 —— 门房（public/sw.js）在「断网 + 这一页以前没访问过」时递出来的那一张。
+
+  ⚠️ 它必须**完全自包含**：不引外部样式表、不引脚本、不发任何请求。
+  因为它的存在意义恰恰是「网络不可用」——
+  只要它还依赖第二个文件，那个文件就很可能同样拿不到，
+  用户看到的照样是一张没样式、或者干脆白屏的页。
+
+  ⚠️ 这也是全项目**唯一**一处硬编码颜色的地方（其余一律走 app/globals.css 的令牌）。
+  理由同上：它不能依赖那个 CSS 文件。为了防止它和设计令牌各走各的，
+  `lib/pwa/swContract.test.ts` 里有一条测试逐值盯着它们必须一致 ——
+  想改颜色就两边一起改，改单边会让闸门红。
+-->
+<style>
+  :root { color-scheme: light; }
+
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    padding: 32px;
+    text-align: center;
+    background: #f7f5f2;
+    color: #3a3733;
+    font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 与小词同一套打光：唯一的来源在左上，字是竖直的缎面银。
+     值取自 app/globals.css 的 --island-ink-lit / --island-ink-deep / --island-silver-*。 */
+  .mark {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background-color: #2b2a27;
+    background-image: radial-gradient(
+      190px 82px at 20px 17px,
+      #39372f 0%,
+      #2b2a27 40%,
+      #1b1a18 100%
+    );
+  }
+
+  /* ⚠️ 先给一个不透明的字色，再在 @supports 里换成透明。
+     否则裁切一旦不生效（老内核），字会彻底看不见 —— 这是最坏的一种静默故障。
+     同一条规矩写在 app/globals.css 的 .island-silver 里。 */
+  .mark span {
+    color: #f5f7f9;
+    font-size: 23px;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  @supports (background-clip: text) or (-webkit-background-clip: text) {
+    .mark span {
+      background-image: linear-gradient(
+        180deg,
+        #f5f7f9 0%,
+        #d7dce2 34%,
+        #bcc2c9 68%,
+        #a4aab0 100%
+      );
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+
+  /* ⚠️ 正文宽度是量出来的，别凭感觉调小。
+     原来写 19em ≈ 247px ≈ 每行 19 个字 —— 42 个字的一段话被排成 **3 行**，
+     末行只剩「动补上。」三个字（手机与宽屏都难看）。
+     26em ≈ 338px ≈ 每行 25 个字 ⇒ 两行收住；再配 text-wrap: balance 让两行长短接近
+     （中文换行不认词边界，光调 max-width 是调不出好看断点的）。 */
+  p {
+    margin: 0;
+    max-width: 26em;
+    font-size: 13px;
+    line-height: 1.75;
+    color: #7a736b;
+    text-wrap: balance;
+  }
+</style>
+</head>
+<body data-page-node-id="VZ5VoPLpx2NzDXH9PBqFr4">
+  <div class="mark" aria-hidden="true" data-page-node-id="4IuNPYaiQ0JSFGcA6GVvS2"><span data-page-node-id="5jDQQLjstPdKMe66a1jQhK">词</span></div>
+  <h1 data-page-node-id="n9WKr5ONOfVEe56WAWUPco">现在没有网络</h1>
+  <!--
+    文案三件事：① 说清现状；② 说清"已经打开的页面还能用"（这是真的，不是安慰）；
+    ③ 说清"联网后会自动补上"（本地优先 + 同步器，见 lib/sync/*）。
+    刻意不提"离线""缓存""同步"这类词 —— 用户不需要知道我们怎么做到的。
+  -->
+  <p data-page-node-id="OiGhkvQC92UR0L6aM7XaK2">这一页还没有存到你的设备上。已经打开过的页面仍然可以照常背词，联网后记录会自动补上。</p>
+</body>
+</html>

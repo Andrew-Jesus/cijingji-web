@@ -52,6 +52,7 @@ import {
 } from "@/lib/console/store";
 import { seedBundle } from "@/lib/db/seed";
 import { progressRatio } from "@/lib/plan/todayProgress";
+import { BUILD_ID, BUILD_LABEL } from "@/lib/release/version";
 
 /** 级别 → 圆点颜色。走 design token 的类名，不写死色值 */
 const LEVEL_DOT: Record<NoticeLevel, string> = {
@@ -64,7 +65,12 @@ const LEVEL_DOT: Record<NoticeLevel, string> = {
 /** 托盘里每一张白卡的公共长相。改一处就全变，不许各写一份 */
 const CARD = "bg-surface rounded-md p-5";
 
-const BUILD_LABEL = process.env.NODE_ENV === "production" ? "正式版" : "开发版";
+/*
+ * `BUILD_LABEL` 从 `lib/release/version.ts` 取，**不在这里另写一份** ——
+ * 它和「门房（Service Worker）给缓存命名用的那个构建号」长在同一个文件里，
+ * 各写一份就会出现"缓存换了、显示的却还是旧版"这类最难查的鬼故事：
+ * 每一处单独看都是对的。（`lib/pwa/swContract.test.ts` 里有一条断言盯着这件事。）
+ */
 const CONFIDENCE_PCT = Math.round(seedBundle.meta.confidence * 100);
 
 export function ConsolePanel({
@@ -196,7 +202,13 @@ export function ConsolePanel({
         内容超了就在这块托盘里滚动。
       */
       style={{ maxHeight }}
-      className="bg-feature flex w-[min(20rem,calc(100vw-2.5rem))] flex-col gap-3 overflow-y-auto rounded-lg p-1.5 outline-none"
+      /*
+        投影是**补上的**（2026-09-30）：globals.css 里那句
+        「浮在内容之上的元素（左下角的控制台球与控制台面板）必须有」一直只落到了球身上 ——
+        面板自己没挂，于是它和身后的正文贴在同一个平面上，层级看不出来。
+        色相取的是图标底的暖黑（见 --shadow-float），不会发灰发冷。
+      */
+      className="bg-feature shadow-float flex w-[min(20rem,calc(100vw-2.5rem))] flex-col gap-3 overflow-y-auto rounded-lg p-1.5 outline-none"
     >
       {/* ① 小词 + 今日任务。先自报家门，再报今天的量 —— 合成一张卡，因为它们都是"我" */}
       <section className={CARD}>
@@ -298,6 +310,13 @@ export function ConsolePanel({
         <section className={CARD}>
           <p className="text-tertiary text-[11px] tracking-[0.08em]">运行状态（开发者）</p>
           <dl className="mt-3 space-y-1.5">
+            {/*
+              构建号。加它是因为排查时需要有个对号入座的地方 ——
+              "你打开的到底是哪一次构建"。这里只报**真实存在**的那个号
+              （和门房给缓存命名用的是同一个，见 lib/release/version.ts），
+              不编一个好看的版本号：这块面板的价值就在于"这里说的是真的"。
+            */}
+            <Fact label="构建号" value={BUILD_ID} />
             <Fact
               label="本地词库"
               value={runtime ? `${runtime.words} 词 · ${runtime.placements} 条归属` : "读取中…"}

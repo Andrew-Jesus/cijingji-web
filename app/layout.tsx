@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ConsoleDock } from "@/components/console/ConsoleDock";
+import { ServiceWorkerRegistrar } from "@/components/pwa/ServiceWorkerRegistrar";
 import { MOTION_BOOTSTRAP_SCRIPT } from "@/lib/ua/wechat";
 
 /*
@@ -14,6 +15,22 @@ export const metadata: Metadata = {
   title: "词径记",
   description:
     "按需定制的背单词工具：只给你这一单元的词，用适合你的方法，按科学间隔安排复习。",
+
+  /*
+   * 主屏安装清单（`app/manifest.ts`）**不用在这里登记** ——
+   * Next 认这个文件名，会自动生成 `/manifest.webmanifest` 并挂上 <link rel="manifest">。
+   *
+   * 但 iOS 是另一套：它不读清单里的 `display`，另认 `apple-mobile-web-app-*`。
+   * 所以"加进主屏之后不要地址栏"这件事必须**两边都写**，漏一边 iOS 上就不是全屏。
+   * 这是项目里少见的"同一件事写两遍"，原因不在我们这边。
+   */
+  appleWebApp: {
+    capable: true,
+    title: "词径记",
+    // 状态栏保持系统默认配色 —— 暖白页面配深色字，跟着系统走比自己指定更不容易出错。
+    statusBarStyle: "default",
+  },
+  applicationName: "词径记",
 };
 
 export const viewport: Viewport = {
@@ -33,6 +50,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           否则微信里会先按正常动效渲染一帧再切降级 —— 用户看到的是"跳一下"。
         */}
         <script dangerouslySetInnerHTML={{ __html: MOTION_BOOTSTRAP_SCRIPT }} />
+        {/*
+          请门房上岗 —— Service Worker 的注册器。它不画任何东西（返回 null）。
+          放在根布局是因为门房是**全站**的基础设施，跟路由无关；
+          它自己会判断"现在是不是正式构建"—— 开发环境不注册，免得被自己的缓存骗。
+        */}
+        <ServiceWorkerRegistrar />
         {children}
         {/*
           左下角常驻悬浮「词」标 —— 小词。
