@@ -48,8 +48,18 @@ const CACHE = PREFIX + VERSION;
 const OFFLINE_URL = "/offline.html";
 
 /* install 时先抓这几样。**不包括 HTML 引用到的那些脚本/样式** ——
-   它们是动态哈希，写不进这个清单，靠下面的 warmShell() 在运行时补。 */
-const PRECACHE = [OFFLINE_URL, "/icon.png", "/apple-icon.png", "/manifest.webmanifest"];
+   它们是动态哈希，写不进这个清单，靠下面的 warmShell() 在运行时补。
+
+   两张满幅（maskable）图标也在这里：它们**不被 HTML 引用**，只在装到主屏时
+   由系统按 manifest 去取 —— 不主动存的话，断网状态下装出来的图标就是空的。 */
+const PRECACHE = [
+  OFFLINE_URL,
+  "/icon.png",
+  "/apple-icon.png",
+  "/icon-maskable-192.png",
+  "/icon-maskable-512.png",
+  "/manifest.webmanifest",
+];
 
 /* 只缓存"接口之外、且确定不可变"的路径。 */
 const BYPASS_PREFIXES = ["/api/"];

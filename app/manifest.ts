@@ -14,10 +14,21 @@ import type { MetadataRoute } from "next";
  *    由 `app/layout.tsx` 的 `metadata.appleWebApp` 提供）。
  *    两边都要写 —— 这是"同一件事写两遍"的少数例外之一，抄漏一边 iOS 上就不是全屏。
  *
- * 图标说明：这里先用 `app/icon.png`（512）与 `app/apple-icon.png`（180）。
- * 安卓会把非 maskable 的图标塞进一个它自己画的底色里 —— 所以后续会再由
- * `scripts/gen-app-icon.py` 出一版**满幅**（`purpose: "maskable"`）的，
- * 图标是**生成物**、禁手改 PNG（项目硬约束）。
+ * 图标分两套，**两套都要给**：
+ *
+ *   · **普通版**（`purpose: "any"`，来自 `app/icon.png`）= 一张内切的深墨圆片，四个角透明。
+ *   · **满幅版**（`purpose: "maskable"`，来自 `public/icon-maskable-*.png`）= 底色铺满整块、
+ *     一个透明像素都没有，**形状交给系统去切**（安卓会套成圆形 / 方圆形 / 圆角方）。
+ *
+ * ⚠️ 两套**不能合成一个文件**。只给普通版：安卓把它塞进自己画的底色里，
+ *    圆片外面会露出一圈白边；只给满幅版：不认 maskable 的场合会把整块方料原样显示，
+ *    字看着偏小、四周空一圈。
+ * 所以规矩是"**分开声明**"，而不是在同一个 src 上写 `"any maskable"`
+ *    —— 后者正是"两种场合里必有一种不对"的写法。
+ *
+ * 两套都由 `scripts/gen-app-icon.py` 一次生成（**图标是生成物、禁手改 PNG**），
+ * 而且字宽取的是同一个 38% —— 圆形遮罩下"看得见的面积"就是那个内切圆，
+ * 于是满幅版看起来和普通版**是同一个标**，换的只是"圆片 → 整块料"。
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -37,9 +48,23 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: "#f7f5f2",
     theme_color: "#f7f5f2",
     icons: [
+      // 普通版 —— 桌面浏览器 / iOS / 旧安卓
       { src: "/icon.png", sizes: "512x512", type: "image/png", purpose: "any" },
       { src: "/apple-icon.png", sizes: "180x180", type: "image/png" },
       { src: "/favicon.ico", sizes: "48x48", type: "image/x-icon" },
+      // 满幅版 —— 安卓按自己的形状裁；192 走旧安装条件，512 走高清
+      {
+        src: "/icon-maskable-192.png",
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "maskable",
+      },
+      {
+        src: "/icon-maskable-512.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "maskable",
+      },
     ],
   };
 }

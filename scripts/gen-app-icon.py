@@ -9,11 +9,16 @@
 （小程序那边的 Tab 图标用的是同一套规矩：单源 pipeline。）
 
 ────────────────────────────────────────────────────────────
-产物（都放 app/，Next.js 按文件名约定自动生成 <link rel="icon">）：
+产物（前三个放 app/，Next.js 按文件名约定自动生成 <link rel="icon">）：
 
-    icon.png        512×512        现代浏览器 / PWA 高清
-    apple-icon.png  180×180        iOS「添加到主屏幕」
-    favicon.ico     32/48/64/128   浏览器标签页 / 老浏览器
+    icon.png                  512×512        现代浏览器 / PWA 高清
+    apple-icon.png            180×180        iOS「添加到主屏幕」
+    favicon.ico               32/48/64/128   浏览器标签页 / 老浏览器
+
+    public/icon-maskable-192.png   192×192    安卓满幅（由 app/manifest.ts 点名）
+    public/icon-maskable-512.png   512×512    同上，高清档
+
+那两张满幅的**不在 app/ 里** —— 详见文件末的「满幅（maskable）图标」一节。
 
 为什么 favicon.ico 里**没有 16px 档**（Andy 2026-09-19 决定不提供）：
 16px 下「词」只有 16×16 个像素点，7 画汉字挤进去必然粘连。实测并排比过
@@ -93,6 +98,37 @@
     这样换字号、换字都不用重调；而且它会自动随尺寸缩小，
     512px 上约 2~3px（看得见的倒角），32px 上不到半像素（自然消失）。
     这是有意为之：小图标不该有倒角，那是给大尺寸看的细节。
+
+────────────────────────────────────────────────────────────
+满幅（maskable）图标 —— 与普通版**同时**生成，是它的补充、不是替代品
+
+安卓会把图标塞进**它自己画的形状**里（圆 / 方圆形 / 圆角方），边缘直接被切掉。
+所以满幅版的规矩和普通版**正好相反**：
+
+    普通版  深墨圆**内切**在正方形里，四个角是透明的 —— 看着像一张圆片
+    满幅版  底色**铺满**整张画布，一个透明像素都不留 —— 看着像一块料，
+            形状交给系统去切
+
+产物放 **`public/`**，不放 `app/`：`app/` 下的文件要符合 Next 的命名约定才会对外可见，
+而这一版是"先被 `app/manifest.ts` 点名、再被浏览器按需取"，走 `public/` 最直白。
+
+**三条硬规矩：**
+
+1. **底色必须铺满**（连四个角），一个透明像素都不能有。
+   留透明角 = 系统切形状时那四个角露白 —— 安卓上最常见的翻车方式，
+   而且**只在真机上才看得见**（桌面浏览器预览一切正常）。
+2. **内容必须落在中间那个直径 80% 的圆里**（`MASKABLE_SAFE`）。
+   当前字宽 38% ⇒ 墨迹外框的角离圆心 26.9%，离 40% 那条线还有余量。
+   ⚠️ **别因为"满幅看着更大"就把字放大**：字宽到 56.6% 时四角正好压线，
+   再大就会切掉笔画 —— 而切掉的往往是「词」右边那个「司」。
+3. **字宽与普通版一模一样（38%）。**
+   圆形遮罩下"看得见的面积"恰好就是那个内切圆，两边等宽 ⇒ **看起来是同一个标**。
+   满幅版换的是"圆片 → 整块料"，**不是换设计**。
+
+关于贴边细高光（`MASKABLE_RIM`）：满幅版**默认不画**。
+那道高光的作用是"给圆片描出边界"，可满幅版根本没有自己的边界 —— 边界由系统切。
+画上去反而会在方圆形遮罩里留下一道**悬在画面中间偏外**的圆环，看着像瑕疵。
+（真想要那道金属感，把 `MASKABLE_RIM` 改成 True 重跑，预览图会对比给你看。）
 """
 
 import io
@@ -103,6 +139,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "app"
+PUBLIC = ROOT / "public"  # 满幅图标落这儿（见文件头）
 
 # ── 造型参数（要调就调这几个）─────────────────────────────────
 GLYPH = "词"  # 单字标。换字注意：笔画比「词」更密的字（如「径」）在小尺寸下会糊
@@ -158,6 +195,11 @@ FADE_FLOOR = 0.05  # 满强度：右下角最低保留多少不透明度
 FADE_GAMMA = 1.7  # >1 = 前段"多撑一会儿"、后段收得更快。
 #                   线性（=1）会让字的中段糊成一片均匀的灰，看着像打了高光，
 #                   而不是"淡出"。
+
+# ── 满幅（maskable）图标（理由与三条规矩见文件头）──────────────
+MASKABLE_SAFE = 0.80  # 安全区直径占画布比例。**这是规范值，别改小**
+MASKABLE_RIM = False  # 满幅版不画贴边细高光（见文件头）
+MASKABLE_PX = (192, 512)  # 安卓最常用的两档：192 走旧安装条件，512 走高清
 
 # ── 颜色 ──────────────────────────────────────────────────────
 ICON_BG = "#2b2a27"  # 底盘的平均色，仅供 SHAPE="squircle" 兜底与文档表述
@@ -284,13 +326,16 @@ def shape_mask(s: int) -> Image.Image:
     return layer
 
 
-def disc_layer(s: int) -> Image.Image:
+def disc_layer(s: int, rim: bool = True) -> Image.Image:
     """圆盘本身：径向柔光（左上受光）+ 贴边细高光，返回 RGB。
 
     径向渐变用 Pillow 自带的 `Image.radial_gradient`，它是 256×256、
     中心 0 → 四角 255 的线性斜坡（实测过：边缘中点 179、四角 254）。
     把它放大到 2s×2s 再按想要的光源位置裁一块 s×s 出来，
     就等于"把光心挪到了画布的某个点"，不用逐像素算距离。
+
+    `rim=False` 时去掉贴边高光与**整个形状遮罩无关**（那是调用方的事）——
+    满幅版用它（理由见文件头）。
     """
     grad = Image.radial_gradient("L").resize((s * 2, s * 2), Image.BILINEAR)
     # 裁窗的左上角 = 渐变中心 (s,s) 减去"光心在画布内的位置"
@@ -303,6 +348,9 @@ def disc_layer(s: int) -> Image.Image:
     out = Image.composite(
         Image.new("RGB", (s, s), DISC_DARK), Image.new("RGB", (s, s), DISC_LIGHT), grad
     )
+
+    if not rim:
+        return out
 
     # 贴边细高光：圆环 ∩ "左上亮、右下暗"的对角斜坡
     r = max(1, int(s * DISC_RIM_W))
@@ -359,30 +407,63 @@ def bevel_masks(mask: Image.Image, d: int) -> tuple[Image.Image, Image.Image]:
     return light.filter(blur), shade.filter(blur)
 
 
-def render(size: int) -> Image.Image:
-    """画一张 size×size 的图标（内部按 SUPERSAMPLE 倍超采样，最后缩回来）。"""
-    s = size * SUPERSAMPLE
+def laid_out_glyph(s: int, size: int) -> tuple[Image.Image, tuple[int, int, int, int]]:
+    """按目标尺寸把「词」定好字号、摆到画布正中，返回（字形遮罩, 墨迹外框）。
+
+    抽出来是为了让下面的「安全区自检」能复用**同一份**排版逻辑 ——
+    否则自检算的和真画的是两套数字，自检就成了摆设。
+    """
     ratio = GLYPH_RATIO_SMALL if size <= SMALL_MAX else GLYPH_RATIO
-    k = detail_strength(size)
-    start, floor = mix(FADE_START, k), mix(FADE_FLOOR, k)
 
-    # ① 底盘（含柔光与贴边高光）
-    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    img.paste(disc_layer(s), (0, 0), shape_mask(s))
-
-    # ② 定字号：先随便给个字号量出墨迹宽度，再按比例缩到目标宽度。
-    #    这样换字体也不用重调数字，不会跑版。
+    # 先随便给个字号量出墨迹宽度，再按比例缩到目标宽度（见文件头第 4 条）。
+    # 这样换字体也不用重调数字，不会跑版。
     base = load_font(int(s * 0.6))
     box = ink_box(glyph_mask(s, base, (0, 0)))
     font = load_font(max(1, round(base.size * (s * ratio) / (box[2] - box[0]))))
 
-    # ③ 定位置：按**实际落墨范围**的中心对齐画布中心（见上文第 7 条）。
+    # 按**实际落墨范围**的中心对齐画布中心（见文件头第 7 条）。
     box = ink_box(glyph_mask(s, font, (0, 0)))
     dx = (s - (box[2] - box[0])) / 2 - box[0]
     dy = (s - (box[3] - box[1])) / 2 - box[1] + s * OPTICAL_SHIFT
 
     mask = glyph_mask(s, font, (dx, dy))
-    ink = ink_box(mask)
+    return mask, ink_box(mask)
+
+
+def safe_zone_report(size: int) -> tuple[float, float]:
+    """满幅版的自检数字：墨迹外框的**角**离圆心多远 / 安全区半径。
+
+    取"角"而不是"边"，是因为被切掉时最先没的就是角。
+    """
+    s = size * SUPERSAMPLE
+    _, ink = laid_out_glyph(s, size)
+    half_w = (ink[2] - ink[0]) / 2 / s
+    half_h = (ink[3] - ink[1]) / 2 / s
+    return (half_w * half_w + half_h * half_h) ** 0.5, MASKABLE_SAFE / 2
+
+
+def render(size: int, maskable: bool = False, rim: bool | None = None) -> Image.Image:
+    """画一张 size×size 的图标（内部按 SUPERSAMPLE 倍超采样，最后缩回来）。
+
+    `maskable=True` 出满幅版（三条规矩见文件头）。
+    `rim` 只在满幅版下有意义，默认取 MASKABLE_RIM —— 留这个口子是为了让预览脚本能并排比。
+    """
+    s = size * SUPERSAMPLE
+    k = detail_strength(size)
+    start, floor = mix(FADE_START, k), mix(FADE_FLOOR, k)
+
+    # ① 底盘。普通版 = 内切的圆，四个角透明；满幅版 = 整块铺满。
+    #    满幅这里用**不带遮罩的 paste** 是故意的：它等于 alpha 全 255，
+    #    于是产物一个透明像素都没有 —— 正是规则 1 要的结果。
+    #    （形状交给系统去切，我们不画。）
+    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    if maskable:
+        img.paste(disc_layer(s, rim=MASKABLE_RIM if rim is None else rim), (0, 0))
+    else:
+        img.paste(disc_layer(s), (0, 0), shape_mask(s))
+
+    # ②③ 字号与位置：与安全区自检共用同一份逻辑（见 laid_out_glyph）
+    mask, ink = laid_out_glyph(s, size)
 
     # ④ 银底 + 斜面：先把字本身画成一块"有倒角的金属"
     glyph = silver_layer(s, ink, k)
@@ -395,6 +476,13 @@ def render(size: int) -> Image.Image:
     # ⑤ 落墨 + 渐隐：字形遮罩与"越往右下越透"的对角遮罩相乘，即为最终 alpha
     alpha = ImageChops.multiply(mask, fade_mask(s, ink, start, floor, FADE_GAMMA))
     img.paste(glyph, (0, 0), alpha)
+
+    if maskable:
+        # 规则 1 的护栏：**真去数一遍**透明像素，不靠"我以为铺满了"。
+        # 这条错误只在真机上才现形（桌面预览一切正常），所以宁可在这儿直接拦下。
+        lowest = img.getchannel("A").getextrema()[0]
+        if lowest != 255:
+            raise SystemExit(f"满幅图标的底色没铺满：最小 alpha = {lowest}（必须 255）")
 
     return img.resize((size, size), Image.LANCZOS)
 
@@ -445,6 +533,25 @@ def main() -> None:
     ico_sizes = [32, 48, 64, 128]
     save_ico(APP / "favicon.ico", [render(n) for n in ico_sizes])
     print("favicon.ico     " + " / ".join(str(n) for n in ico_sizes))
+
+    # 满幅（maskable）—— 与上面三张**同时**生成。落 public/，由 app/manifest.ts 点名。
+    # render() 里那条 alpha 自检会在"底色没铺满"时直接中断，不会静默出错图。
+    PUBLIC.mkdir(exist_ok=True)
+    for n in MASKABLE_PX:
+        render(n, maskable=True).save(PUBLIC / f"icon-maskable-{n}.png")
+    print(
+        "public/icon-maskable-*  "
+        + " / ".join(f"{n}×{n}" for n in MASKABLE_PX)
+        + "（底色铺满，无透明像素）"
+    )
+
+    # 安全区自检：把数字打出来，别等真机上才发现笔画被切了。
+    far, limit = safe_zone_report(max(MASKABLE_PX))
+    verdict = "安全" if far < limit else "★ 压线/越界"
+    print(
+        f"\n满幅安全区：墨迹外框的角离圆心 {far:.1%}，红线 {limit:.1%}"
+        f"（直径 {MASKABLE_SAFE:.0%}）⇒ {verdict}（余量 {limit - far:.1%}）"
+    )
 
     print(
         f"\n字形「{GLYPH}」 · {SHAPE} · {ICON_BG} 底 + 银字"

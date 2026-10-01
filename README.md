@@ -353,7 +353,7 @@ pushNotice({ key: "daily-plan", level: "info", title: "今日任务单已排好"
 |---|---|
 | `public/sw.js` | 门房本体。**手写、零依赖**（少一个会出错的变量）。⚠️ 它不进 typecheck、也不进 ESLint，靠契约测试盯 |
 | `public/offline.html` | 离线兜底页。**完全自包含**（不外引任何东西）—— 全项目唯一一处硬编码颜色 |
-| `app/manifest.ts` | 「添加到主屏」清单。Next 认这个文件名会自动挂 `<link rel="manifest">`，不用在 layout 里登记 |
+| `app/manifest.ts` | 「添加到主屏」清单。Next 认这个文件名会自动挂 `<link rel="manifest">`，不用在 layout 里登记。图标分 `any` 与 `maskable` 两套 |
 | `components/pwa/ServiceWorkerRegistrar.tsx` | 注册器。**只在正式构建注册**，等 `load` 之后，地址带 `?v=<构建号>` |
 | `lib/release/version.ts` | **构建号**的唯一出口（每次部署都变）→ 门房缓存名 + 面板显示 |
 | `lib/pwa/cache.ts` | 缓存名前缀常量（页面侧要认得它，才找得到"自己那个缓存"） |
@@ -488,7 +488,7 @@ self.addEventListener("activate", (event) => {
 > 改动前后对比见工作区根目录 `词径记-首页主卡配色-改动前后-v1.png`。
 > `brand-50` 仍用于**选项卡选中态**，那是它的正当用途，别一起换掉。
 
-**图标**（`app/icon.png` / `app/apple-icon.png` / `app/favicon.ico`）：
+**图标**（`app/icon.png` / `app/apple-icon.png` / `app/favicon.ico`，外加两张 `public/icon-maskable-*.png`）：
 
 - 设计语言：**深墨圆 + 银字「词」**，参考 Next.js 默认图标那种"深底亮标"的做法，
   再往**金属浮雕**推了一步。三处细节共用**同一个光源（左上）**，所以能"立"起来：
@@ -528,6 +528,63 @@ self.addEventListener("activate", (event) => {
 >
 > 完整说明图（含 1:1 真实大小对照）见工作区根目录 `词径记-图标尺寸说明-v2.png`，
 > 由 `scripts/make-icon-guide.py` 从**真实产物文件**生成，改图标后重跑一次即可同步。
+
+**满幅（maskable）图标 —— 2026-10-01 加**
+
+安卓会把图标塞进**它自己画的形状**里（圆形 / 方圆形 / 圆角方形），边缘直接切掉。
+只给一张"内切圆片"的话，切到带角的外壳时，**四个角会是透明的**，
+露出桌面底色 —— 一圈白边，而且**桌面浏览器预览一切正常，只有真机上看得见**。
+
+所以同一个标要出**两套**，**且不许合并成一个文件**：
+
+| | 文件 | 声明 | 长什么样 |
+|---|---|---|---|
+| 普通版 | `app/icon.png` | `purpose: "any"` | 深墨圆**内切**在正方形里，四角透明 |
+| 满幅版 | `public/icon-maskable-192.png` · `-512.png` | `purpose: "maskable"` | 底色**铺满**整张画布，形状交给系统切 |
+
+> ⚠️ **不要写 `purpose: "any maskable"`。** 那是"两种场合里必有一种不对"的写法：
+> 只给满幅版，不认 maskable 的地方会把整块方料原样显示（字看着偏小、四周空一圈）；
+> 只给普通版，安卓会把它塞进自己画的底色里（圆片外露一圈白边）。
+> `lib/pwa/manifestIcons.test.ts` 里有一条断言专门盯着这个。
+
+三条规矩（`scripts/gen-app-icon.py` 文件头也写着）：
+
+1. **底色必须铺满**，一个透明像素都不能有 —— 脚本里有一条**自检**，
+   最小 alpha 不是 255 就直接中断，不会静默出一张错图。
+2. **内容必须落在直径 80% 的"安全区"圆里**。当前字宽 38% ⇒ 墨迹外框的角离圆心 27.4%，
+   红线 40%，余量 12.6%。**别因为"满幅看着更大"就把字放大**：字宽到 56.6% 就正好压线，
+   再大「司」会被切掉。
+3. **字宽与普通版同一个 38%。** 圆形外壳下"看得见的面积"就是那个内切圆，
+   两边等宽 ⇒ 看起来**是同一个标**；换的只是"圆片 → 整块料"。
+
+产出两张的原因：**192 走旧版安装条件，512 走高清档**。两张都由生成脚本一次出，
+并且已经登记进 `public/sw.js` 的 `PRECACHE` —— 它们**不被 HTML 引用**，
+不主动存的话，断网状态下装到主屏的图标就是空的。
+
+验收方式（**这条只能靠真机**）：
+
+```bash
+# 本地只能看到"四种外壳都铺满、字没压线"；真正的判据是装到安卓桌面上
+"C:/Users/wangh/.workbuddy/binaries/python/envs/default/Scripts/python.exe" scripts/make-maskable-preview.py
+```
+
+→ 出 `词径记-满幅图标-预览-v1.png`（工作区根目录）：四种外壳的效果模拟 + 安全区金圈 +
+"拿普通版顶替会怎样"的翻车对照。**满幅图标没法在浏览器里验收** —— 桌面看到的永远是完整方图。
+
+**本地已经验过什么（2026-10-01，都可复现）：**
+
+| 检查 | 结果 |
+|---|---|
+| 生产构建 | ✅ 12/12 静态页，`/manifest.webmanifest` 预渲染成功 |
+| 清单正文 | ✅ 两条 `purpose: "maskable"`（192 / 512），两条 `any` |
+| HTTP 取图 | ✅ `/icon-maskable-192.png`、`-512.png` 与磁盘文件 **sha256 逐字节一致** |
+| 透明度 | ✅ alpha **255~255**（一个透明像素都没有） |
+| 安全区 | ✅ 墨迹外框的角离圆心 **27.4%**，红线 40% |
+| `sw.js` 响应头 | ✅ `Cache-Control: no-cache, must-revalidate` + `Service-Worker-Allowed: /` |
+
+> ⚠️ 验 HTTP 时踩了一个坑：`curl -o /dev/null` 与 `curl -o /c/tmp/x.png` **都是无效路径**
+> （curl 是原生程序，不认 MSYS 的 `/c/…`），于是命令失败、变量为空 ——
+> 而"空 == 空"会让哈希比对**假通过**。判据要写成"两侧都非空且相等"。
 
 
 ## 环境要求
@@ -620,11 +677,16 @@ app/
 │   ├── test/page.tsx         第 2 页：20 词自测
 │   └── result/page.tsx       第 3 页：结果（最关键的情绪时刻）
 ├── layout.tsx                根布局（首帧内联降级脚本 + 全站常驻「小词」+ 门房注册器）
-├── manifest.ts               「添加到主屏」清单（Next 认文件名，自动挂 <link rel="manifest">）
+├── manifest.ts               「添加到主屏」清单（Next 认文件名，自动挂 <link rel="manifest">）。
+│                             图标分两套：`any` 用 app/ 里那三张，`maskable` 用 public/ 下那两张
 ├── globals.css               ★ design tokens 全在这里（Tailwind v4 的 @theme）
-├── icon.png                  图标 512×512（脚本生成，勿手改）
+├── icon.png                  图标 512×512（脚本生成，勿手改）· 普通版，四角透明
 ├── apple-icon.png            图标 180×180（同上）
 └── favicon.ico               图标 32/48/64/128 多档（同上，**故意不含 16**）
+public/
+├── sw.js                     门房本体（不进 typecheck / ESLint，靠契约测试盯）
+├── offline.html              离线兜底页（自包含）
+└── icon-maskable-192.png     满幅图标 · 底色铺满、形状交给系统切（512 那张同理）
 components/
 ├── onboarding/
 │   ├── StepProgress.tsx      分段式进度条
@@ -677,7 +739,8 @@ lib/
 ├── pwa/
 │   ├── cache.ts              ★ 缓存名前缀 —— 与 `public/sw.js` 的 PREFIX 靠契约测试钉住
 │   ├── status.ts             ★ 纯函数：门房状态 → 一行人话（给开发者模式用）
-│   └── swContract.test.ts    契约测试：门房那几条"删掉不会报错、只会静默出事"的规矩
+│   ├── swContract.test.ts    契约测试：门房那几条"删掉不会报错、只会静默出事"的规矩
+│   └── manifestIcons.test.ts 契约测试：清单点名的图标必须真在（含尺寸与 purpose 的分开声明）
 ├── db/
 │   ├── types.ts              12 张表的类型（字段名与未来 Supabase 逐字一致）
 │   ├── local.ts              Dexie 本地库（IndexedDB）
@@ -698,8 +761,9 @@ lib/
 └── design/tokens.ts          动效与圆角（颜色只在 globals.css，避免两处真相）
 scripts/build-seed.mjs        样张 JSON → seed-data.json
 scripts/mock-ai-server.mjs    ★ 本地假模型：**没有 Key 也能验通 AI 链路**（含 system 指纹体检）
-scripts/gen-app-icon.py       ★ 图标生成（单源）：改图标只改这里，别手改 PNG
+scripts/gen-app-icon.py       ★ 图标生成（单源）：改图标只改这里，别手改 PNG（普通版 + 满幅版一次出）
 scripts/make-icon-guide.py    从真实图标产物生成「尺寸说明书」配图（文档用）
+scripts/make-maskable-preview.py  ★ 满幅图标预览：四种外壳的模拟 + 安全区金圈（**只能靠它验收**）
 .env.example                  ★ 环境变量样例（**入库**；真 Key 在 .env.local，永不入库）
 ```
 
