@@ -42,7 +42,26 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="zh-CN" className="h-full antialiased">
+    /*
+     * ⚠️ `suppressHydrationWarning` 不是可有可无的装饰，它在给下面那个首帧脚本擦屁股。
+     *
+     * 服务端渲染这一趟，有两件事它**没法知道**：
+     *   ① 是不是微信内置浏览器（那要看 UA）
+     *   ② 用户有没有开系统的「减弱动态效果」（那是浏览器端的偏好，根本不会随请求发上来）
+     * 所以服务端吐出的 HTML 上**一定没有** `data-motion`；
+     * 而首帧脚本会在 React 接手之前把它打上去。
+     *
+     * React 水合一比对：「服务端给的 HTML 里没这个属性，眼前的 DOM 上却有」→
+     * 判为水合不一致，**把整棵服务端 HTML 丢掉、改成纯客户端重渲**
+     * （报错原文就写着 "This won't be patched up."）。
+     * 代价是首屏白一下 / 闪一下，SSR 等于白做 —— 而这趟重渲完全可以避免。
+     *
+     * `suppressHydrationWarning` 只压**这一个元素自己**的属性差异（不向下传染给子节点），
+     * 正是 React 官方为「水合前用脚本改根元素属性」留的标准出口
+     * （next-themes 这类主题库都这么写）。
+     * ⚠️ 它压的是**这一条**，不是关掉水合检查：子节点该报的照报。
+     */
+    <html lang="zh-CN" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full flex flex-col bg-page text-primary">
         {/*
           必须在 body 的第一个位置、且是同步脚本：
