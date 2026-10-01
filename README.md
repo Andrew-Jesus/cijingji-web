@@ -490,6 +490,11 @@ self.addEventListener("activate", (event) => {
 
 **图标**（`app/icon.png` / `app/apple-icon.png` / `app/favicon.ico`，外加两张 `public/icon-maskable-*.png`）：
 
+> ⚠️ 这五张里有**三张是满幅的**（`apple-icon.png` 与两张 `icon-maskable-*`），
+> 但**理由不是同一个**：安卓那边是"保险"，iPhone 那边是**硬性规矩**（透明像素会被填黑）。
+> 分别见下文「满幅（maskable）图标」与「`apple-icon.png` 为什么也必须满幅」两节。
+> 剩下两张里，`icon.png` 是**四角透明的圆片**（那是对的，别顺手也改成满幅）。
+
 - 设计语言：**深墨圆 + 银字「词」**，参考 Next.js 默认图标那种"深底亮标"的做法，
   再往**金属浮雕**推了一步。三处细节共用**同一个光源（左上）**，所以能"立"起来：
   底盘（左上亮、右下暗 + 贴边一道细高光）／笔画（左上沿亮、右下沿暗的倒角）／
@@ -571,6 +576,33 @@ self.addEventListener("activate", (event) => {
 → 出 `词径记-满幅图标-预览-v1.png`（工作区根目录）：四种外壳的效果模拟 + 安全区金圈 +
 "拿普通版顶替会怎样"的翻车对照。**满幅图标没法在浏览器里验收** —— 桌面看到的永远是完整方图。
 
+**`apple-icon.png` 为什么也必须满幅 —— 2026-10-01 修**
+
+`app/apple-icon.png` 是 iOS「添加到主屏幕」专用的那张。它原来跟 `icon.png` 一样是
+**内切圆、四角透明** —— 在桌面浏览器里看**一切正常**，但真加到 iPhone 上会翻车：
+
+| | 允许透明吗 | 不认识 maskable 时 |
+|---|---|---|
+| **安卓** | 允许，会自己垫一块底色 | 满幅版是"保险"，不是"必需" |
+| **iPhone** | **不许** —— 先画一块圆角方形的底 → 贴图标 → **透明处一律填纯黑** | 无此概念，它只认 apple-touch-icon |
+
+后果不是"细微差别"：深墨圆片外面裹一层纯黑方底，圆与方之间一道看得见的弧线，
+一眼就是没做好的样子。**按 iOS 规则模拟，圆角方之内 17.9% 的面积会被填黑**（改后 0.0%）。
+
+> 📎 对照图自己跑，别手画：
+> `"C:/Users/wangh/.workbuddy/binaries/python/envs/default/Scripts/python.exe" scripts/make-ios-icon-check.py`
+> → 工作区根目录 `词径记-iPhone图标-预览-v1.png`，左"改前"右"改后"，并当场量出百分比。
+> 右格读的是**磁盘上那个真身文件**、不是现场重画的 ⇒ 它同时是一张**验收图**。
+
+**改法**：那张走 `render(APPLE_PX, maskable=True)`。
+**字宽仍然是 38%，与另外三张一字不差** —— 图标在主屏上都会被缩成同样大小的格子，
+字宽同为画布的 38%，三个平台看到的字一样大。满幅版换的是"圆片 → 整块料"，**不是换设计**。
+
+> ⚠️ **别把它改回 `render(APPLE_PX)`。** 生成脚本里那句 alpha 自检只在 `maskable=True`
+> 这条路上生效；改回去就**绕过了自检，而且一路绿灯** —— 浏览器照常显示、构建照绿、
+> 只有 iPhone 用户看到一块黑角。`lib/pwa/appIcons.test.ts` 有一条断言专门盯着这个
+> （**已实测**：把产物换成内切圆它就会红，且报错文案里带着修法）。
+
 **本地已经验过什么（2026-10-01，都可复现）：**
 
 | 检查 | 结果 |
@@ -578,8 +610,10 @@ self.addEventListener("activate", (event) => {
 | 生产构建 | ✅ 12/12 静态页，`/manifest.webmanifest` 预渲染成功 |
 | 清单正文 | ✅ 两条 `purpose: "maskable"`（192 / 512），两条 `any` |
 | HTTP 取图 | ✅ `/icon-maskable-192.png`、`-512.png` 与磁盘文件 **sha256 逐字节一致** |
-| 透明度 | ✅ alpha **255~255**（一个透明像素都没有） |
+| 透明度 | ✅ 三张满幅图 alpha **255~255**（含 `apple-icon.png`；脚本会**读回产物**复核，不只看内存） |
+| iOS 黑角 | ✅ 按 iOS 圆角方模拟：改前 **17.9%** 会被填黑 → 改后 **0.0%** |
 | 安全区 | ✅ 墨迹外框的角离圆心 **27.4%**，红线 40% |
+| 图标契约用例 | ✅ `lib/pwa/appIcons.test.ts` 4 条（含"先自证解码器可信"2 条）—— 故意做坏会红 |
 | `sw.js` 响应头 | ✅ `Cache-Control: no-cache, must-revalidate` + `Service-Worker-Allowed: /` |
 
 > ⚠️ 验 HTTP 时踩了一个坑：`curl -o /dev/null` 与 `curl -o /c/tmp/x.png` **都是无效路径**
@@ -695,7 +729,7 @@ app/
 │                             图标分两套：`any` 用 app/ 里那三张，`maskable` 用 public/ 下那两张
 ├── globals.css               ★ design tokens 全在这里（Tailwind v4 的 @theme）
 ├── icon.png                  图标 512×512（脚本生成，勿手改）· 普通版，四角透明
-├── apple-icon.png            图标 180×180（同上）
+├── apple-icon.png            iOS 图标 180×180（同上）· **满幅** —— iOS 不许透明，否则四角被填黑
 └── favicon.ico               图标 32/48/64/128 多档（同上，**故意不含 16**）
 public/
 ├── sw.js                     门房本体（不进 typecheck / ESLint，靠契约测试盯）
@@ -754,7 +788,9 @@ lib/
 │   ├── cache.ts              ★ 缓存名前缀 —— 与 `public/sw.js` 的 PREFIX 靠契约测试钉住
 │   ├── status.ts             ★ 纯函数：门房状态 → 一行人话（给开发者模式用）
 │   ├── swContract.test.ts    契约测试：门房那几条"删掉不会报错、只会静默出事"的规矩
-│   └── manifestIcons.test.ts 契约测试：清单点名的图标必须真在（含尺寸与 purpose 的分开声明）
+│   ├── manifestIcons.test.ts 契约测试：清单点名的图标必须真在（含尺寸与 purpose 的分开声明）
+│   └── appIcons.test.ts      契约测试：apple-icon 不许有透明像素（否则 iOS 填黑）；
+│                             自带一个最小 PNG 解码器 —— 先自证解码器可信，再拿它下结论
 ├── db/
 │   ├── types.ts              12 张表的类型（字段名与未来 Supabase 逐字一致）
 │   ├── local.ts              Dexie 本地库（IndexedDB）
@@ -775,9 +811,12 @@ lib/
 └── design/tokens.ts          动效与圆角（颜色只在 globals.css，避免两处真相）
 scripts/build-seed.mjs        样张 JSON → seed-data.json
 scripts/mock-ai-server.mjs    ★ 本地假模型：**没有 Key 也能验通 AI 链路**（含 system 指纹体检）
-scripts/gen-app-icon.py       ★ 图标生成（单源）：改图标只改这里，别手改 PNG（普通版 + 满幅版一次出）
+scripts/gen-app-icon.py       ★ 图标生成（单源）：改图标只改这里，别手改 PNG。
+                              普通版 + **三张满幅版**（两张安卓 + iOS 那张）一次出
 scripts/make-icon-guide.py    从真实图标产物生成「尺寸说明书」配图（文档用）
 scripts/make-maskable-preview.py  ★ 满幅图标预览：四种外壳的模拟 + 安全区金圈（**只能靠它验收**）
+scripts/make-ios-icon-check.py ★ iPhone 图标验收：改前/改后对照 + 当场量出"会被填黑多少"
+                              （右格读**磁盘上的真身文件**，不是现场重画 —— 所以它是验收图）
 .env.example                  ★ 环境变量样例（**入库**；真 Key 在 .env.local，永不入库）
 ```
 

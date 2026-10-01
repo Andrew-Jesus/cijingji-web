@@ -11,14 +11,18 @@
 ────────────────────────────────────────────────────────────
 产物（前三个放 app/，Next.js 按文件名约定自动生成 <link rel="icon">）：
 
-    icon.png                  512×512        现代浏览器 / PWA 高清
-    apple-icon.png            180×180        iOS「添加到主屏幕」
+    icon.png                  512×512        现代浏览器 / PWA 高清（圆片，四角透明）
+    apple-icon.png            180×180        iOS「添加到主屏幕」（**满幅**，见下）
     favicon.ico               32/48/64/128   浏览器标签页 / 老浏览器
 
     public/icon-maskable-192.png   192×192    安卓满幅（由 app/manifest.ts 点名）
     public/icon-maskable-512.png   512×512    同上，高清档
 
-那两张满幅的**不在 app/ 里** —— 详见文件末的「满幅（maskable）图标」一节。
+**总共有三张满幅图，但理由不是同一个：**
+那两张安卓的**不在 app/ 里**（`app/` 下的文件要符合 Next 的命名约定才对外可见，
+而它们先由 `app/manifest.ts` 点名、再被浏览器按需取，走 `public/` 最直白）——
+理由见文件末的「满幅（maskable）图标」一节。
+apple-icon 满幅则是为了 iPhone 的硬性规矩，理由见紧随其后的「apple-icon 为什么也满幅」一节。
 
 为什么 favicon.ico 里**没有 16px 档**（Andy 2026-09-19 决定不提供）：
 16px 下「词」只有 16×16 个像素点，7 画汉字挤进去必然粘连。实测并排比过
@@ -129,6 +133,35 @@
 那道高光的作用是"给圆片描出边界"，可满幅版根本没有自己的边界 —— 边界由系统切。
 画上去反而会在方圆形遮罩里留下一道**悬在画面中间偏外**的圆环，看着像瑕疵。
 （真想要那道金属感，把 `MASKABLE_RIM` 改成 True 重跑，预览图会对比给你看。）
+────────────────────────────────────────────────────────────
+apple-icon.png 为什么**也**是满幅 —— 安卓与 iPhone 的规矩正好相反
+
+    · 安卓：允许你给"四角透明的圆片"。不认识 maskable 时自己垫一块底色
+            （所以那两张满幅图是"保险"，不是"必需"）。
+    · iPhone：**不许有透明**。它先画一块圆角方形的底，把图标合成上去，
+            再把所有透明像素**一律填成纯黑** —— Apple 图标规范与多家
+            图标服务商口径一致：*"A transparent Apple touch icon shows up
+            as your logo on an ugly black square."*
+
+我们原来给 iPhone 的正是**内切圆、四角 alpha = 0** 那张 ⇒ 正好踩在这条上。
+后果不是"细微差别"：深墨圆片外面裹一层纯黑方底，圆与方之间一道看得见的弧线，
+一眼就是没做好的样子。**而且它在桌面浏览器里完全看不出来** ——
+只有真加到 iPhone 主屏上才现形（iOS 还会缓存图标，删了重装才刷新）。
+
+实测（本地按 iOS 规则模拟，见 `scripts/make-ios-icon-check.py`）：
+改前**圆角方之内有 17.9% 的面积是透明的**，改后 0.0%。
+
+════════════════════════════════════════════════════════════
+**所以：apple-icon.png 也走满幅路径**（`render(180, maskable=True)`）——
+底色铺满、形状交给 iOS 自己去切圆角。
+
+**字宽仍然是 38%，与另外三张一字不差。** 这一条容易起疑（"iOS 会不会显得字小"），
+所以把理由写全：图标在主屏上都会被缩放成同样大小的格子，
+**字宽同为画布的 38% ⇒ 三个平台上看到的字一样大**。
+满幅版换的是"圆片 → 整块料"，**不是换设计** —— 对 iPhone 同样适用。
+
+唯一与安卓满幅版不同的地方：**形状由 iOS 切**（圆角半径约边长的 22.37%），
+而安卓可能切成圆、也可能切成圆角方。我们两边都给"一块铺满的料"，正好都接得住。
 """
 
 import io
@@ -200,6 +233,9 @@ FADE_GAMMA = 1.7  # >1 = 前段"多撑一会儿"、后段收得更快。
 MASKABLE_SAFE = 0.80  # 安全区直径占画布比例。**这是规范值，别改小**
 MASKABLE_RIM = False  # 满幅版不画贴边细高光（见文件头）
 MASKABLE_PX = (192, 512)  # 安卓最常用的两档：192 走旧安装条件，512 走高清
+
+# ── iOS（理由见文件头「apple-icon 为什么也满幅」）─────────────
+APPLE_PX = 180  # 「添加到主屏幕」的边长。**同样满幅** —— iOS 不许有透明像素
 
 # ── 颜色 ──────────────────────────────────────────────────────
 ICON_BG = "#2b2a27"  # 底盘的平均色，仅供 SHAPE="squircle" 兜底与文档表述
@@ -524,8 +560,10 @@ def main() -> None:
     render(512).save(APP / "icon.png")
     print("icon.png        512×512")
 
-    render(180).save(APP / "apple-icon.png")
-    print("apple-icon.png  180×180")
+    # iOS 那张**必须满幅**：iOS 不认透明，会把四个透明角填成纯黑（见文件头）。
+    # 走 maskable=True 之后，render() 里那条 alpha 自检会顺手替我们把"铺满了没有"验一遍。
+    render(APPLE_PX, maskable=True).save(APP / "apple-icon.png")
+    print(f"apple-icon.png  {APPLE_PX}×{APPLE_PX}（满幅）")
 
     # 为什么不放 16：见文件头（实测三种做法全糊，不给反而更好看）。
     # 128 是给高 DPI 标签页 / 书签栏大图标用的；再大（256）在 favicon 场景
@@ -544,6 +582,17 @@ def main() -> None:
         + " / ".join(f"{n}×{n}" for n in MASKABLE_PX)
         + "（底色铺满，无透明像素）"
     )
+
+    # 独立复核：**把产物读回来**数一遍透明像素，而不是复用刚才内存里那张。
+    # iOS 那张尤其要复核 —— 它在桌面浏览器里看着一切正常，只有真加到 iPhone 主屏才现形；
+    # 而 iOS 会缓存图标，装完才发现的话得先删掉桌面图标再重装一次。
+    print("\n满幅产物复核（读回产物文件，不看内存）：")
+    for f in [APP / "apple-icon.png"] + [
+        PUBLIC / f"icon-maskable-{n}.png" for n in MASKABLE_PX
+    ]:
+        lowest = Image.open(f).getchannel("A").getextrema()[0]
+        verdict = "无透明像素 ✅" if lowest == 255 else f"★ 还有透明（最小 alpha {lowest}）"
+        print(f"  {f.name:<26} {verdict}")
 
     # 安全区自检：把数字打出来，别等真机上才发现笔画被切了。
     far, limit = safe_zone_report(max(MASKABLE_PX))
