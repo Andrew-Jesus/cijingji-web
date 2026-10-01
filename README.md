@@ -630,7 +630,21 @@ npm run build      # 构建（同时做类型检查）
 npm run typecheck  # 只做类型检查
 npm run lint       # 代码检查
 npm run seed       # 重新生成 mock 种子（改了源词表才需要跑）
+npx next typegen   # 只生成路由类型定义（见下）
 ```
+
+> ⚠️ **`typecheck` 依赖 `.next/types/` 里的生成物**（2026-10-01 踩到）。
+> `LayoutProps` / `PageProps` 这类类型是 **Next 自己生成**的，`tsconfig.json` 的 `include` 里
+> 硬写着 `.next/types/**/*.ts`。产物在的时候这个依赖完全隐形；
+> **一旦把 `.next*` 删干净**（清理磁盘），`tsc` 就会报
+> `app/layout.tsx(43,50): error TS2304: Cannot find name 'LayoutProps'.`
+> —— 那不是代码坏了，是缺了生成物。
+>
+> **修法**：`npx next typegen`（实测只生成 4 个文件 / 512K，秒级，不改 `tsconfig.json`）。
+> **别**为了绕开它去改 `tsconfig.json` 的 `include`：路由类型会整个失效，
+> 而且**不报错**，只会从"编译期能抓住"退化成"运行时才发现"。
+>
+> ⇒ 清理过产物目录之后，**第一件事就是重跑 `npm run typecheck`**，别默认"删的都是垃圾"。
 
 ## 依赖源说明
 
