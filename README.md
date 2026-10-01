@@ -894,3 +894,19 @@ scripts/make-ios-icon-check.py ★ iPhone 图标验收：改前/改后对照 + �
 18. **`/api/ai` 必须保持动态路由。** 构建产物里它应该是 `ƒ`（按请求渲染）而不是 `○`（静态）。
     如果哪天它变成静态的，说明 Key 有可能被打进产物 —— 这是硬约束 1 在构建层面的最后一道防线，
     部署前看一眼 `npm run build` 的那张路由表。
+19. **根布局 `<html>` 上的 `suppressHydrationWarning` 和首帧降级脚本是「一对」，不能只留一半。**
+    首帧内联脚本（`lib/ua/wechat.ts` 的 `MOTION_BOOTSTRAP_SCRIPT`）必须在 React 接手**之前**
+    给 `<html>` 打 `data-motion="reduced"`（放到 React 里就晚了 —— 会先按正常动效渲染一帧再切降级，
+    用户看到"跳一下"）。但服务端渲染**无从知道**两件事：① 是不是微信内置浏览器（看 UA）、
+    ② 用户有没有开系统「减弱动态效果」（浏览器端偏好，不随请求发上来）
+    ⇒ 服务端吐出的 HTML 上**一定没有**这个属性 ⇒ React 水合一比对就判不一致，
+    **把整棵服务端 HTML 丢掉、改成纯客户端重渲**（首屏闪一下，SSR 等于白做）。
+
+    修法与边界：`<html suppressHydrationWarning>` —— 它只压**这一个元素自己**的属性差异
+    （不向下传染给子节点），是 React 官方为"水合前用脚本改根元素属性"留的标准出口。
+
+    ⚠️ **它只在开发模式报**（React 生产版不输出那段文案）⇒ 别拿"线上控制台干净"当"没问题"。
+    复现手法：`agent-browser --init-script <钩子>` 在**页面加载前**给 `console.error` 挂钩子
+    （自带的 `console` 命令抓不到这条），钩子里**打桩 `matchMedia`** 让
+    `prefers-reduced-motion` 恒真即可诱发 —— 不需要伪造微信 UA。
+    防呆：`lib/ua/motionBootstrap.test.ts` 把这一对约束绑在一起测，删掉 suppress 它会红。
