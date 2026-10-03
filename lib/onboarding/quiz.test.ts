@@ -102,15 +102,19 @@ describe("buildQuiz（跑在真实样张数据上）", () => {
     expect(questions).toHaveLength(QUIZ_SIZE);
   });
 
-  it("跨单元轮转：8 个单元全部被覆盖，且题量分布均匀（每单元 2~3 题）", () => {
+  it("跨单元轮转：所有单元都被覆盖，且题量分布均匀（最多差 1 题）", () => {
     const byUnit = new Map<string, number>();
-    for (const q of questions) byUnit.set(q.unit_code, (byUnit.get(q.unit_code) ?? 0) + 1);
+    for (const q of questions) byUnit.set(q.unit_id, (byUnit.get(q.unit_id) ?? 0) + 1);
 
-    expect(byUnit.size).toBe(bundle.units.length); // 8 个单元一个不落
-    for (const count of byUnit.values()) {
-      expect(count).toBeGreaterThanOrEqual(2);
-      expect(count).toBeLessThanOrEqual(3);
-    }
+    // 单元数 × 每单元题数 ≈ 总题数 —— 断言写成"相对"的，是因为
+    // 单元数（现在 18 = 3 册 × 6）与题量（20）都会变。
+    // ⚠️ 分组**必须用 unit_id**：unit_code 是课本自己的标号（"Unit 1"），
+    // 三册重号 —— 按它分组会把 18 个单元悄悄并成 6 格，而且不报错、不崩。
+    expect(byUnit.size).toBe(bundle.units.length); // 一个单元都不落
+    const counts = [...byUnit.values()];
+    expect(Math.min(...counts)).toBeGreaterThanOrEqual(1);
+    expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
+    expect(counts.reduce((a, b) => a + b, 0)).toBe(QUIZ_SIZE);
   });
 
   it(`每题恰好 ${OPTIONS_PER_QUESTION} 个选项，且没有重复释义`, () => {
@@ -148,14 +152,14 @@ describe("buildQuiz（跑在真实样张数据上）", () => {
   });
 
   it("限定单元时只出这些单元的题", () => {
-    const only = ["renjiao_2024:8A:U1", "renjiao_2024:8A:U2"];
+    const only = ["wys_2024:8A:U1", "wys_2024:8A:U2"];
     const qs = buildQuiz({ snapshot, units: only, size: 6 });
     expect(qs).toHaveLength(6);
     expect(qs.every((q) => q.unit_code === "Unit 1" || q.unit_code === "Unit 2")).toBe(true);
   });
 
   it("size 大于可用词数时取尽为止，不报错", () => {
-    const qs = buildQuiz({ snapshot, units: ["renjiao_2024:8A:U1"], size: 9999 });
+    const qs = buildQuiz({ snapshot, units: ["wys_2024:8A:U1"], size: 9999 });
     expect(qs.length).toBeGreaterThan(0);
     expect(qs.length).toBeLessThanOrEqual(53);
     expect(new Set(qs.map((q) => q.word_id)).size).toBe(qs.length);
@@ -256,8 +260,8 @@ describe("buildQuiz 的兜底与边界（构造数据）", () => {
 
 describe("scoreAnswers", () => {
   const qs: QuizQuestion[] = [
-    { word_id: "a", lemma: "a", phonetic_uk: null, pos: null, unit_code: "Unit 1", options: ["x", "y"], answer_index: 0 },
-    { word_id: "b", lemma: "b", phonetic_uk: null, pos: null, unit_code: "Unit 1", options: ["x", "y"], answer_index: 1 },
+    { word_id: "a", lemma: "a", phonetic_uk: null, pos: null, unit_id: "v:test:U1", unit_code: "Unit 1", options: ["x", "y"], answer_index: 0 },
+    { word_id: "b", lemma: "b", phonetic_uk: null, pos: null, unit_id: "v:test:U1", unit_code: "Unit 1", options: ["x", "y"], answer_index: 1 },
   ];
 
   it("答对数正确统计", () => {

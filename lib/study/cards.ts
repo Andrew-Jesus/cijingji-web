@@ -195,9 +195,59 @@ function pickDistractors(
   return out;
 }
 
-/** 可接受的写法：原形 + 归一形（去连字符、小写）。去重后返回，避免同一答案判两次 */
+/**
+ * 词头里的「占位符记号」—— 课本用它指代"某人 / 某物"，本身不是要写出来的内容。
+ *   · `name... after`    → 三个点
+ *   · `lend (sb) a hand` → 括号里的 sb（中英文括号都收）
+ */
+const PLACEHOLDER_PATTERNS: readonly RegExp[] = [
+  /\.{3,}/g,
+  /[（(][^）)]*[）)]/g,
+];
+
+/**
+ * 派生出「把占位符记号去掉」的可接受写法（2026-10-03 Andy 拍板）。
+ *
+ * ── 为什么需要它 ────────────────────────────────────────────────
+ * 课本印的是 `name... after`，但学习者在框里写出来的只会是 `name after`。
+ * 严格照原样判会把人判错，而那道题实际上变成了"考标点符号"，
+ * 跟会不会这个短语没有半点关系 —— 这属于「用规则把用户搞糊涂」。
+ *
+ * ── 放宽的方向是"接受真实英语"，不是"差一个字母也算对" ──────────
+ * 后者会把"会不会拼"这件事测没（判分里明确禁止）。这里去掉的是**记号**，
+ * 用户写出来的仍然是真正的英文短语。
+ *
+ * ⚠️ `sth` / `sb` 单独作为词出现时**不动**（`be glued to sth` 就该原样写）——
+ * 它们是课本里通行的写法，不是标点记号。
+ *
+ * 纯函数：同样的输入永远得到同样的输出，可单测。
+ */
+export function placeholderVariants(headword: string): string[] {
+  let cur = headword.trim();
+  const out: string[] = [];
+  for (const re of PLACEHOLDER_PATTERNS) {
+    const next = cur.replace(re, " ").replace(/\s+/g, " ").trim();
+    // 只有真的变了才收 —— 避免把原文重复塞进答案集
+    if (next && next !== cur) out.push(next);
+    cur = next;
+  }
+  return out;
+}
+
+/**
+ * 可接受的写法：原形 + 归一形（去连字符、小写）+ 去掉占位符记号的变形。
+ * 去重后返回，避免同一答案判两次。
+ */
 function uniqueAnswers(lemma: string, normalized: string): string[] {
-  const set = new Set<string>([lemma.trim(), normalized.trim()].filter((s) => s.length > 0));
+  const set = new Set<string>();
+  const add = (v: string) => {
+    const t = v.trim();
+    if (t) set.add(t);
+  };
+  for (const base of [lemma, normalized]) {
+    add(base);
+    for (const variant of placeholderVariants(base)) add(variant);
+  }
   return [...set];
 }
 

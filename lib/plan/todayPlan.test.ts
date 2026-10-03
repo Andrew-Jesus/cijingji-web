@@ -6,7 +6,7 @@ import { LIMITS } from "@/lib/scope/schema";
 import { secondsForMode } from "./estimate";
 import { DEFAULT_SCOPE_LABEL, assembleTodayPlan, scopeLabelOf } from "./todayPlan";
 
-const U1 = "renjiao_2024:8A:U1";
+const U1 = "wys_2024:8A:U1";
 
 function goalProfile(spellingRequired: boolean): GoalProfile {
   return {
@@ -69,7 +69,7 @@ function snapshot(wordCount: number): WordSnapshot {
     units: [
       {
         id: U1,
-        volume_id: "renjiao_2024:8A",
+        volume_id: "wys_2024:8A",
         unit_no: 1,
         unit_code: "Unit 1",
         title_en: "Happy Holiday",
@@ -224,13 +224,13 @@ describe("assembleTodayPlan / 错词参与排计划", () => {
 });
 
 describe("assembleTodayPlan / 标签与范围", () => {
-  it("默认范围的标签是「八上 Unit 1」（三个页面显示同一个词）", () => {
+  it("默认范围的标签是「八上 Unit 1 · This is me」（三个页面显示同一个词）", () => {
     const r = assembleTodayPlan({
       snapshot: snapshot(10),
       goalProfile: goalProfile(true),
       dailyMinutes: 15,
     });
-    expect(r.ok && r.scopeLabel === "八上 Unit 1").toBe(true);
+    expect(r.ok && r.scopeLabel === "八上 Unit 1 · This is me").toBe(true);
   });
 
   it("范围没有 label 时用统一的兜底叫法", () => {
@@ -300,7 +300,7 @@ describe("assembleTodayPlan / 失败分支必须可区分", () => {
       snapshot: snapshot(5),
       goalProfile: goalProfile(true),
       dailyMinutes: 15,
-      scope: { v: 1, include: [{ type: "curriculum_unit", units: ["renjiao_2024:8A:U9"] }] },
+      scope: { v: 1, include: [{ type: "curriculum_unit", units: ["wys_2024:8A:U9"] }] },
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe("SCOPE_TARGET_NOT_FOUND");

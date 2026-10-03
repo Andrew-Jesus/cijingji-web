@@ -71,7 +71,8 @@ export function resolveScope(scope: ScopeJson, snapshot: WordSnapshot): ResolveR
       return {
         ok: false,
         code: "UNSUPPORTED_FILTER",
-        message: "阶段 0 无法按「仅核心词」筛选：样张数据的 is_core 未知（不做假装能筛的筛选器）",
+        message:
+          "无法按「仅核心词」筛选：数据的 is_core 未知（课本用加粗标课标三级词，但还没有可靠的机器判法）",
       };
     }
 

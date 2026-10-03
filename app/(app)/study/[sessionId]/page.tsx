@@ -786,7 +786,8 @@ function CardView({
         <>
           <p className="text-primary mt-4 text-2xl leading-snug font-medium">{card.meaning_zh}</p>
           {card.pos && <p className="text-tertiary mt-1.5 text-xs">{card.pos}</p>}
-          <p className="text-tertiary mt-4 text-xs">写出对应的英文单词</p>
+          {/* 「或短语」不是凑字：词表里收了 take part in 这类短语，题干说只写单词会让人猛一下 */}
+          <p className="text-tertiary mt-4 text-xs">写出对应的英文单词或短语</p>
         </>
       ) : (
         <>
@@ -820,7 +821,7 @@ function CardView({
             spellCheck={false}
             enterKeyHint="done"
             placeholder="在这里写"
-            aria-label="输入英文单词"
+            aria-label="输入英文单词或短语"
             className="border-subtle bg-page text-primary placeholder:text-tertiary focus:border-brand-600 w-full rounded-md border px-3.5 py-3 text-base tracking-wide outline-none disabled:opacity-70"
           />
           {!revealed && (

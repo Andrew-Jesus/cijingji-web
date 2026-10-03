@@ -10,6 +10,8 @@
  */
 import { z } from "zod";
 
+import type { Unit, Volume } from "@/lib/db/types";
+
 /** 上游 词库方案 §6.2 定义的 include 类型全集 */
 export const SCOPE_INCLUDE_TYPES = [
   "curriculum_unit",
@@ -105,19 +107,81 @@ export function validateScope(input: unknown): ValidateResult {
   };
 }
 
-/** 阶段 0 冷启动用的默认范围（八上 Unit 1） */
+/**
+ * 冷启动用的默认范围。
+ *
+ * 2026-10-01 改：样张（人教版八上）换成**外研社八上**（产品里真正在用的那本）。
+ * id 必须与 `scripts/build-seed.mjs` 生成的 `lib/db/seed-data.json` 里的
+ * `meta.curriculum_code` / `meta.volume_id` / `meta.default_unit_id` 一致 ——
+ * 这三处**只能由种子脚本产生**，这里的字面量是它的镜像，改数据源时要一起改。
+ *
+ * 等「选我的课本 / 选我的单元」做出来之后，这个函数就退化成"新用户的第一本书"，
+ * 不再是唯一的范围来源。
+ */
 export function defaultScope(): ScopeJson {
   return {
     v: 1,
-    label: "八上 Unit 1",
+    label: "八上 Unit 1 · This is me",
     include: [
       {
         type: "curriculum_unit",
-        curriculum: "renjiao_2024",
-        volume: "renjiao_2024:8A",
-        units: ["renjiao_2024:8A:U1"],
+        curriculum: "wys_2024",
+        volume: "wys_2024:8A",
+        units: ["wys_2024:8A:U1"],
       },
     ],
     daily_cap: 20,
   };
 }
+
+/** 年级的中文数字。下标 = grade_num（1 年级 → "一"） */
+const GRADE_CN = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+
+/**
+ * 教材简称：`{grade_num: 8, term: "上"}` → 「八上」。
+ * 课本封面、目录页用的都是这个叫法，用户也是照着它找的。
+ */
+export function shortVolumeLabel(volume: Pick<Volume, "grade_num" | "term">): string {
+  const grade = GRADE_CN[volume.grade_num] ?? String(volume.grade_num);
+  return `${grade}${volume.term}`;
+}
+
+/**
+ * 单元的显示名：`八上 Unit 1 · This is me`。
+ *
+ * **唯一一处** —— 首页那一行、选择面板里的每一行、任务单的"起点"全用它，
+ * 这样三个地方说的单元名绝不会长得不一样。
+ * 带上教材里的英文标题是刻意的：用户手上翻的是课本目录，
+ * 目录上印的就是 "Unit 1 This is me"，只写"Unit 1"他会对不上号。
+ */
+export function unitDisplayLabel(
+  volume: Pick<Volume, "grade_num" | "term">,
+  unit: Pick<Unit, "unit_code" | "title_en">,
+): string {
+  const head = `${shortVolumeLabel(volume)} ${unit.unit_code}`;
+  return unit.title_en ? `${head} · ${unit.title_en}` : head;
+}
+
+/**
+ * 从一条单元记录生成范围描述 —— **「选我的单元」的唯一入口**。
+ *
+ * 与 `defaultScope()` 一样，这里的课程 / 册次 id 都取自传入的记录本身
+ * （不是写死的字面量），所以换教材 / 换册次时不用改这里。
+ * `daily_cap` 沿用阶段 0 的 20，与默认范围保持一致 —— 换单元不该顺带改每日量。
+ */
+export function scopeForUnit(volume: Volume, unit: Unit): ScopeJson {
+  return {
+    v: 1,
+    label: unitDisplayLabel(volume, unit),
+    include: [
+      {
+        type: "curriculum_unit",
+        curriculum: volume.curriculum_id,
+        volume: volume.id,
+        units: [unit.id],
+      },
+    ],
+    daily_cap: defaultScope().daily_cap,
+  };
+}
+

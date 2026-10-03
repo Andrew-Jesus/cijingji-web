@@ -37,6 +37,10 @@ const snapshot: WordSnapshot = {
 
 const zhongkao = bundle.goal_profiles.find((p) => p.goal_code === "zhongkao")!;
 
+/** 默认范围（defaultScope）那个单元里到底有多少词 —— 由数据算，不写死 */
+const defaultUnitId = defaultScope().include[0].units?.[0];
+const wordsInDefaultUnit = bundle.word_placements.filter((p) => p.unit_id === defaultUnitId).length;
+
 function planFor(dailyMinutes: number) {
   const merged = mergeProfile({ profile: zhongkao, phases: zhongkao.phases });
   const validated = validateScope(defaultScope());
@@ -84,7 +88,13 @@ describe("引导流程数据链路（照着 result 页的算法走）", () => {
   it("30 分钟会被每日上限截住（不把整本书塞进一天）", () => {
     const { plan, dailyCap } = planFor(30);
     expect(dailyCap).toBe(LIMITS.daily_cap); // 30min/25s = 72，被截到 50
-    expect(plan.items.length).toBe(LIMITS.daily_cap);
+
+    // 两个数都要说清楚，否则会误以为"上限没生效"：
+    //   · 上限 = 50（dailyCap 的确被截住了）
+    //   · 默认单元的词数由种子算出（上面那个 wordsInDefaultUnit，**不写死**）——
+    //     比 50 多 ⇒ 这一天是被上限截住的；比 50 少 ⇒ 这一天排的是整个单元。
+    //     这里原来写死 48，数据一加（多收短语 / 加册）必崩，而且崩的是测试不是代码。
+    expect(plan.items.length).toBe(Math.min(LIMITS.daily_cap, wordsInDefaultUnit));
     expect(plan.estimated_minutes).toBeLessThan(30); // 诚实：排不满就说排不满
   });
 

@@ -14,6 +14,12 @@
  * 这一页**不再自己装配任务单**：装配收在 `assembleTodayPlan` 一处，
  * 首页 / 结果页 / 学习页跑的是同一条流水线，所以三个地方说的数字永远一样。
  *
+ * ── 2026-10-02：从「一本书」到「三本书」────────────────────────────
+ * 八下 / 九上进来之后，`volumes` 里不再只有一条记录，所以选择抽屉改成
+ * **按册分组**（见 lib/scope/selection.ts 与 components/scope/UnitPicker.tsx）。
+ * 首页自身的逻辑一行没变 —— 它只认「当前这一条 unit 记录」，
+ * 换册次和换单元走的是同一条路：改 `selectedUnitId`，整个 effect 重跑一遍。
+ *
  * ── 排版约定（B2 收尾时统一过一次，改动请沿用）────────────────────────
  *   页面主角是「今天多少词」，其余都往后站，靠三样东西分层：
  *     ① 字号：主数字 44px ＞ 正文 14px ＞ 辅助 12px ＞ 标签 11px
@@ -29,6 +35,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 import { SignOutLink } from "@/components/auth/SignOutLink";
+import { UnitPicker, type UnitGroup, type UnitOption } from "@/components/scope/UnitPicker";
 import { pushNotice, setTodayProgress } from "@/lib/console/store";
 import { db } from "@/lib/db/local";
 import { getProfile, isOnboarded } from "@/lib/db/repo";
@@ -37,6 +44,9 @@ import { deriveWeakWordIds, loadReviewLogs, saveDailyPlan, todayKey } from "@/li
 import { findGoal, interestLabel, isGoalSupported } from "@/lib/onboarding/questions";
 import { countDoneInPlan } from "@/lib/plan/todayProgress";
 import { assembleTodayPlan } from "@/lib/plan/todayPlan";
+import { resolveScope } from "@/lib/scope/resolveScope";
+import { defaultScope, scopeForUnit, unitDisplayLabel } from "@/lib/scope/schema";
+import { selectUnit, useSelectedUnitId } from "@/lib/scope/selection";
 
 interface HomeData {
   perDay: number;
@@ -47,6 +57,12 @@ interface HomeData {
   summary: string;
   unitLabel: string;
   totalInUnit: number;
+  /** 可选的单元，**按册分组**（选择抽屉里的每一组 / 每一行）。词数与 `totalInUnit` 同一个口径 */
+  unitGroups: UnitGroup[];
+  /** 这是哪套书，如「外研社版 初中英语（2024 版）」 —— 抽屉顶部要说清 */
+  volumeLabel: string;
+  /** 当前选中的单元 id（抽屉据此标出"现在就是它"） */
+  currentUnitId: string;
   firstWords: { word_id: string; lemma: string; meaning_zh: string | null }[];
   goalLabel: string;
   goalSupported: boolean;
@@ -65,9 +81,20 @@ interface HomeData {
 
 type State = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: HomeData };
 
+/** 册次顺序：年级升序，同年级上册在前。与 `scripts/build-seed.mjs` 的册次排序同一口径 */
+const TERM_RANK: Record<string, number> = { 上: 0, 下: 1, 全: 2 };
+
 export default function HomePage() {
   const router = useRouter();
   const [state, setState] = useState<State>({ status: "loading" });
+  /**
+   * 用户选的单元（只存本机，见 lib/scope/selection.ts）。
+   *
+   * 它一变，下面那个 effect 就重跑 —— 「换单元」不需要另写一套刷新逻辑，
+   * 把同样的流水线对着新范围再跑一遍，就是全部要做的事。
+   */
+  const selectedUnitId = useSelectedUnitId();
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,20 +111,42 @@ export default function HomePage() {
         }
 
         await ensureSeeded(db);
-        const [units, words, senses, placements, goalProfiles, reviewLogs] = await Promise.all([
-          db.units.toArray(),
-          db.words.toArray(),
-          db.senses.toArray(),
-          db.word_placements.toArray(),
-          db.goal_profiles.toArray(),
-          // 走仓库层，不直接读表 —— 它只返回**属于当前用户**的作答记录。
-          // 直接读全表会让"今日已练"把上一个人在这台设备上留下的记录也算进来。
-          loadReviewLogs(),
-        ]);
+        const [units, words, senses, placements, volumes, curricula, goalProfiles, reviewLogs] =
+          await Promise.all([
+            db.units.toArray(),
+            db.words.toArray(),
+            db.senses.toArray(),
+            db.word_placements.toArray(),
+            // 册次与课程体系：只用来给用户看"这是哪本书 / 哪个单元"，
+            // 以及给范围描述提供 id（见 scopeForUnit）。
+            db.volumes.toArray(),
+            db.curricula.toArray(),
+            db.goal_profiles.toArray(),
+            // 走仓库层，不直接读表 —— 它只返回**属于当前用户**的作答记录。
+            // 直接读全表会让"今日已练"把上一个人在这台设备上留下的记录也算进来。
+            loadReviewLogs(),
+          ]);
         const snapshot = { units, words, senses, placements };
 
         const goalProfile = goalProfiles.find((p) => p.goal_code === "zhongkao");
         if (!goalProfile) throw new Error("本地库缺少 goal_profiles（中考）配置");
+
+        // ── 今天学哪个单元 ─────────────────────────────────────────
+        // 优先用用户选过的那个；没选过、或选过的已不在库里（例如换了册次）→ 回落默认单元。
+        // 回落是静默的，但**绝不编造**：库里没有的 unit id 不会被当成有效选择。
+        const unitById = new Map(units.map((u) => [u.id, u]));
+        const selected = selectedUnitId ? unitById.get(selectedUnitId) : undefined;
+        const fallbackUnitId = defaultScope().include[0]?.units?.[0];
+        const currentUnit =
+          selected ?? (fallbackUnitId ? unitById.get(fallbackUnitId) : undefined) ?? units[0];
+        if (!currentUnit) throw new Error("本地库缺少单元数据（ensureSeeded 没跑成功？）");
+
+        const currentVolume = volumes.find((v) => v.id === currentUnit.volume_id);
+        if (!currentVolume) throw new Error(`本地库缺少册次 ${currentUnit.volume_id}`);
+
+        // 范围只由「这一条单元记录」决定 —— 课程 / 册次 id 都取自记录本身，
+        // 不在页面里另写字面量（换教材 / 换册次时这个文件一行都不用改）。
+        const scope = scopeForUnit(currentVolume, currentUnit);
 
         // 错词本：从 review_logs 派生 —— "最后一次没答对"的词，最近的排前面。
         // 这是阶段 0 里"复习"这件事的**全部**实现（真正的间隔调度归阶段 2 的 FSRS）。
@@ -110,8 +159,33 @@ export default function HomePage() {
           goalProfile,
           dailyMinutes: profile.daily_minutes,
           weakWordIds,
+          scope,
         });
         if (!assembled.ok) throw new Error(`[${assembled.code}] ${assembled.message}`);
+
+        // 选择抽屉里的每一行。词数**走同一个 resolveScope**，
+        // 所以抽屉里写"48 词"、选完首页也一定写 48 —— 两处只有一个口径。
+        // 一个词都没解析出来的单元不列出来：点了只会得到一张空任务单。
+        const volumeLabel =
+          curricula.find((c) => c.id === currentVolume.curriculum_id)?.display_name ??
+          currentVolume.grade_label;
+        const unitGroups: UnitGroup[] = [...volumes]
+          .sort((a, b) => a.grade_num - b.grade_num || TERM_RANK[a.term] - TERM_RANK[b.term])
+          .map((v) => ({
+            id: v.id,
+            title: v.grade_label,
+            options: units
+              .filter((u) => u.volume_id === v.id)
+              .sort((a, b) => a.sort_order - b.sort_order)
+              .flatMap((u) => {
+                const resolved = resolveScope(scopeForUnit(v, u), snapshot);
+                if (!resolved.ok) return [];
+                return [
+                  { id: u.id, label: unitDisplayLabel(v, u), count: resolved.words.length },
+                ] as UnitOption[];
+              }),
+          }))
+          .filter((g) => g.options.length > 0);
 
         const plan = assembled.plan;
         const goalOption = findGoal(profile.goal);
@@ -159,6 +233,9 @@ export default function HomePage() {
             summary: goalProfile.user_facing_summary,
             unitLabel: assembled.scopeLabel,
             totalInUnit: assembled.wordsInScope,
+            unitGroups,
+            volumeLabel,
+            currentUnitId: currentUnit.id,
             firstWords: plan.items.slice(0, 5).map((i) => ({
               word_id: i.word_id,
               lemma: i.lemma,
@@ -190,7 +267,7 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, selectedUnitId]);
 
   return (
     // pb-20 而不是 pb-12：左下角常驻着小词（44px 高 + 20px 边距），
@@ -261,11 +338,25 @@ export default function HomePage() {
 
           {/* ② 今天的前几个词 */}
           <section className="border-subtle bg-surface rounded-lg border p-5">
-            <div className="flex items-baseline justify-between gap-3">
-              <p className="text-tertiary text-[11px] tracking-[0.08em]">今天从这些开始</p>
-              <p className="text-tertiary shrink-0 text-[11px] tabular-nums">
+            {/* flex-wrap：单元名带上课本目录的英文标题后变长了，
+                窄屏上「今天从这些开始」会被挤断成"今天从这些开 / 始"。
+                一行放不下就让右边的整块换到下一行，而不是把左边的字压碎。
+                `max-w-full`：320px 那种极窄屏连单独一行都放不下时，让单元名在按钮内部换行，
+                绝不让它撑破卡片（`shrink-0` 会阻止它自己缩，所以必须靠 max-width 兜住）。 */}
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <p className="text-tertiary shrink-0 text-[11px] tracking-[0.08em]">今天从这些开始</p>
+              {/* 这一行就是「换单元」的入口（Andy 2026-10-02 拍板 = 方案①）：
+                  改动最小，也最贴真实动作（"我今天想背 Unit 3"），不用去翻设置页。
+                  样式沿用原来那行文字，只多了可点的手感与一个下箭头。 */}
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                aria-haspopup="dialog"
+                className="text-tertiary hover:text-secondary -mr-1 flex max-w-full shrink-0 items-center gap-1 rounded-sm px-1 py-0.5 text-[11px] tabular-nums transition-colors"
+              >
                 {state.data.unitLabel} · 共 {state.data.totalInUnit} 词
-              </p>
+                <ChevronDown />
+              </button>
             </div>
             <ul className="divide-subtle mt-3 divide-y">
               {state.data.firstWords.map((w) => (
@@ -317,7 +408,42 @@ export default function HomePage() {
           </QuietNote>
         </div>
       )}
+
+      {/* 换单元的抽屉。按钮长在 ready 分支里，所以这里不必再判一次状态 */}
+      {pickerOpen && state.status === "ready" && (
+        <UnitPicker
+          subtitle={state.data.volumeLabel}
+          groups={state.data.unitGroups}
+          currentId={state.data.currentUnitId}
+          onPick={(unitId) => {
+            selectUnit(unitId);
+            setPickerOpen(false);
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
     </main>
+  );
+}
+
+/**
+ * 一个朝下的细箭头 —— 「这一行可以点」的标记。
+ * 手画的：禁 emoji 是产品级硬约束，而它只有 2.5 × 2.5，为它引一整套图标库不划算。
+ */
+function ChevronDown() {
+  return (
+    <svg
+      viewBox="0 0 12 12"
+      className="h-2.5 w-2.5 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 4.5 6 7.5 9 4.5" />
+    </svg>
   );
 }
 

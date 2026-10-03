@@ -2,15 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import type { Sense, Unit, Word, WordPlacement } from "@/lib/db/types";
 import type { WordSnapshot } from "@/lib/scope/resolveScope";
-import { buildKnownLemmaSet, buildStudyCards, normalizeMode } from "./cards";
+import { buildKnownLemmaSet, buildStudyCards, normalizeMode, placeholderVariants } from "./cards";
+import { gradeRecallSpell } from "./grade";
 
-const U1 = "renjiao_2024:8A:U1";
-const U2 = "renjiao_2024:8A:U2";
+const U1 = "wys_2024:8A:U1";
+const U2 = "wys_2024:8A:U2";
 
 function unit(id: string, unitNo: number): Unit {
   return {
     id,
-    volume_id: "renjiao_2024:8A",
+    volume_id: "wys_2024:8A",
     unit_no: unitNo,
     unit_code: `Unit ${unitNo}`,
     title_en: "",
@@ -251,5 +252,68 @@ describe("buildKnownLemmaSet", () => {
     const { snapshot } = fixture();
     snapshot.words.push(word("w:h", "well-known"));
     expect(buildKnownLemmaSet(snapshot).has("wellknown")).toBe(true);
+  });
+});
+
+
+describe("短语占位符：可接受写法自动放宽（2026-10-03）", () => {
+  it("省略号被去掉：name... after → name after", () => {
+    expect(placeholderVariants("name... after")).toEqual(["name after"]);
+  });
+
+  it("括号里的 sb 被去掉：lend (sb) a hand → lend a hand", () => {
+    expect(placeholderVariants("lend (sb) a hand")).toEqual(["lend a hand"]);
+  });
+
+  it("两处省略号一起去：mistake... for... → mistake for", () => {
+    expect(placeholderVariants("mistake... for...")).toEqual(["mistake for"]);
+  });
+
+  it("sth / sb 单独作为词出现时**不动**（它们是课本写法，不是标点记号）", () => {
+    expect(placeholderVariants("be glued to sth")).toEqual([]);
+    expect(placeholderVariants("unlock the secrets of sth")).toEqual([]);
+  });
+
+  it("普通词与普通短语不产生多余写法", () => {
+    expect(placeholderVariants("instead")).toEqual([]);
+    expect(placeholderVariants("take part in")).toEqual([]);
+  });
+
+  it("纯函数：同样的输入永远得到同样的输出", () => {
+    expect(placeholderVariants("name... after")).toEqual(placeholderVariants("name... after"));
+  });
+
+  it("带占位符的短语进卡片后，原样与去掉记号两种写法都在答案集里", () => {
+    const snapshot: WordSnapshot = {
+      units: [unit(U1, 1)],
+      words: [word("w:name", "name... after")],
+      senses: [sense("w:name", "以……的名字给……命名")],
+      placements: [placement("w:name", U1)],
+    };
+    const cards = buildStudyCards({
+      items: [{ word_id: "w:name", mode: "recall_spell", meaning_zh: "以……的名字给……命名" }],
+      snapshot,
+    });
+    expect(cards[0].answers).toContain("name... after");
+    expect(cards[0].answers).toContain("name after");
+  });
+
+  it("端到端：用户写 name after 判对，写 name 判错（放宽的是记号，不是拼写）", () => {
+    const snapshot: WordSnapshot = {
+      units: [unit(U1, 1)],
+      words: [word("w:name", "name... after")],
+      senses: [sense("w:name", "以……的名字给……命名")],
+      placements: [placement("w:name", U1)],
+    };
+    const card = buildStudyCards({
+      items: [{ word_id: "w:name", mode: "recall_spell", meaning_zh: "以……的名字给……命名" }],
+      snapshot,
+    })[0];
+    const known = buildKnownLemmaSet(snapshot);
+
+    expect(gradeRecallSpell({ typed: "name after", card, knownLemmas: known }).is_correct).toBe(true);
+    expect(gradeRecallSpell({ typed: "Name After", card, knownLemmas: known }).is_correct).toBe(true);
+    expect(gradeRecallSpell({ typed: "name... after", card, knownLemmas: known }).is_correct).toBe(true);
+    expect(gradeRecallSpell({ typed: "name", card, knownLemmas: known }).is_correct).toBe(false);
   });
 });

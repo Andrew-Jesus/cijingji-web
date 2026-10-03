@@ -18,8 +18,21 @@
  *      同单元词的语义场更接近，选项才有区分度；从整个词库乱抽，
  *      正确答案会因为"太明显"而失去筛选力。
  *
+ * ── 2026-10-02：多册之后的「单元身份」问题（本轮修的坑）──────────
+ *
+ * `unit_code` 是**课本自己的标号**：「Unit 1」。单册时代它是唯一的，
+ * 三册并存之后 **八上 Unit 1 / 八下 Unit 1 / 九上 Unit 1 的 unit_code 完全一样**。
+ * 于是任何"按 unit_code 分组 / 去重 / 计数"的写法都会把三册的同号单元悄悄并成一格：
+ * 自测的 by_unit 从 18 格塌成 6 格，而且**不报错、不崩**。
+ *
+ * 修法：**分组一律用 `unit_id`**（带册次前缀，全局唯一），
+ * `unit_code` 只用来"给人看"，并且给人看时必须带上册次（见 `unitLabel`）。
+ *
+ * 这条不是本文件独有的：凡是"看起来像 id 但其实是标号"的字段
+ * （`Unit 1`、`Part A`、`Chapter 2`）一旦跨容器使用，都会踩同一个坑。
+ *
  * 边界（如实说，不假装）：这个自测只是**冷启动的粗略分档**，
- * 用来决定一开始的难度，不是测评。题源是样张数据，与 Andy 的课本不一致。
+ * 用来决定一开始的难度，不是测评。
  */
 import type { Sense, Word, WordPlacement } from "@/lib/db/types";
 import type { WordSnapshot } from "@/lib/scope/resolveScope";
@@ -42,6 +55,12 @@ export interface QuizQuestion {
   lemma: string;
   phonetic_uk: string | null;
   pos: string | null;
+  /**
+   * 单元的**全局唯一标识**（`wys_2024:8A:U1`）。分组、计数、去重一律用它 ——
+   * 用 `unit_code` 会把三册的同号单元并成一格（见文件头注释）。
+   */
+  unit_id: string;
+  /** 课本自己的标号「Unit 1」。**只能显示，不能当身份** */
   unit_code: string;
   /** 4 条释义，已打乱 */
   options: string[];
@@ -53,7 +72,7 @@ export interface BuildQuizInput {
   snapshot: WordSnapshot;
   size?: number;
   seed?: number;
-  /** 限定单元；不传 = 用快照里全部有词的单元 */
+  /** 限定单元（传的是 **unit_id**）；不传 = 用快照里全部有词的单元 */
   units?: string[];
 }
 
@@ -91,10 +110,16 @@ export function buildQuiz(input: BuildQuizInput): QuizQuestion[] {
     else candidatesByUnit.set(p.unit_id, [p]);
   }
 
-  // 单元顺序 = unit_no 升序（确定性）
-  const unitIds = [...candidatesByUnit.keys()].sort(
-    (a, b) => (unitById.get(a)?.unit_no ?? 0) - (unitById.get(b)?.unit_no ?? 0),
-  );
+  // 单元顺序 = 册次 → unit_no 升序（确定性）。
+  // 为什么不能只按 unit_no：三册各有 Unit 1~6，只按 unit_no 排序会让
+  // 三册的 Unit 1 挤在一起，轮转时"一遍扫过去"的顺序在册与册之间来回跳。
+  // 排序键里带上 unit_id 前缀（册次在冒号前一段），跨册顺序就稳定了。
+  const unitIds = [...candidatesByUnit.keys()].sort((a, b) => {
+    const va = volumeKeyOf(a);
+    const vb = volumeKeyOf(b);
+    if (va !== vb) return va < vb ? -1 : 1;
+    return (unitById.get(a)?.unit_no ?? 0) - (unitById.get(b)?.unit_no ?? 0);
+  });
 
   // 单元内：先按 lemma 排序（消除上游顺序差异），再用种子洗牌
   const poolByUnit = new Map<string, WordPlacement[]>();
@@ -186,6 +211,7 @@ export function buildQuiz(input: BuildQuizInput): QuizQuestion[] {
       lemma: word.lemma,
       phonetic_uk: word.phonetic_uk,
       pos: sense.pos,
+      unit_id: p.unit_id,
       unit_code: unitById.get(p.unit_id)?.unit_code ?? "",
       options,
       answer_index: options.indexOf(correct),
@@ -238,6 +264,16 @@ export const LEVEL_BANDS: LevelBand[] = [
 ];
 
 export interface UnitBreakdown {
+  /** 分组键，全局唯一（带册次前缀） */
+  unit_id: string;
+  /**
+   * ⚠️ 与 `QuizQuestion.unit_code` **不是同一个东西**。
+   *
+   * 问题对象上它是课本标号（"Unit 1"）；这里它是**给人看的那一整行**
+   * （"八上 Unit 1"）。原因很实在：三册并存时"Unit 1"会出现三次，
+   * 结果页那张清单会出现三行一模一样的「Unit 1 0/1」，用户没法分辨。
+   * 这里是**唯一**一处被允许带上册次的 `unit_code`。
+   */
   unit_code: string;
   correct: number;
   total: number;
@@ -279,15 +315,22 @@ export function bandFor(correct: number, total: number): Omit<QuizResult, "by_un
   };
 }
 
+/**
+ * 判分 + 按单元汇总。
+ *
+ * **按 `unit_id` 分组，不按 `unit_code`** —— 后者三册重号（见文件头注释）。
+ */
 export function scoreQuiz(questions: QuizQuestion[], answers: (number | null)[]): QuizResult {
   const { correct, total } = scoreAnswers(questions, answers);
 
   const byUnitMap = new Map<string, UnitBreakdown>();
   questions.forEach((q, i) => {
-    const row = byUnitMap.get(q.unit_code) ?? { unit_code: q.unit_code, correct: 0, total: 0 };
+    const row =
+      byUnitMap.get(q.unit_id) ??
+      { unit_id: q.unit_id, unit_code: unitLabel(q), correct: 0, total: 0 };
     row.total += 1;
     if (answers[i] === q.answer_index) row.correct += 1;
-    byUnitMap.set(q.unit_code, row);
+    byUnitMap.set(q.unit_id, row);
   });
 
   return { ...bandFor(correct, total), by_unit: [...byUnitMap.values()] };
@@ -311,4 +354,34 @@ function lemma(wordById: Map<string, Word>, p: WordPlacement): string {
 /** 只做空白归一 —— 不做大小写/标点清洗，中文释义那套清洗会误伤 */
 function norm(s: string): string {
   return s.trim();
+}
+
+// ------------------------------------------------------------------ 单元身份
+
+/** 年级的中文数字。下标 = 年级数字（8 → 「八」） */
+const GRADE_CN = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+
+/** 从 `wys_2024:8A:U1` 里取出册次那一段（`8A`） */
+function volumeKeyOf(unitId: string): string {
+  return unitId.split(":")[1] ?? "";
+}
+
+/**
+ * `8A` → 「八上」。用户手上翻的是课本，课本封面上写的是「八年级上册」，
+ * 只写 `8A` 他对不上号。
+ *
+ * 认不出来就把原串还回去 —— **绝不猜**（猜错会把九上说成八上）。
+ */
+export function volumeShortLabel(volumeKey: string): string {
+  const m = /^(\d)([ABF])$/.exec(volumeKey);
+  if (!m) return volumeKey;
+  const grade = GRADE_CN[Number(m[1])] ?? m[1];
+  const term = m[2] === "A" ? "上" : m[2] === "B" ? "下" : "全";
+  return `${grade}${term}`;
+}
+
+/** 一个单元的整行显示名：「八上 Unit 1」。册次拿不到时退回课本标号本身 */
+export function unitLabel(q: Pick<QuizQuestion, "unit_id" | "unit_code">): string {
+  const short = volumeShortLabel(volumeKeyOf(q.unit_id));
+  return short ? `${short} ${q.unit_code}` : q.unit_code;
 }
