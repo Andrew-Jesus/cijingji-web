@@ -54,7 +54,7 @@ const flags = new Map(
 const positional = args.filter((a) => !a.startsWith("--"));
 
 /** 各册当前生效的词表版本 —— 哪册做了修订就只升哪册 */
-const VOLUME_VERSIONS = { 八上: "v3", 八下: "v4", 九上: "v4" };
+const VOLUME_VERSIONS = { 八上: "v4", 八下: "v4", 九上: "v4" };
 
 /**
  * 默认三册。顺序 = 册次顺序 = 产品选择面板里的顺序。

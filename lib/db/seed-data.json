@@ -45,7 +45,7 @@
  },
  "report": {
   "sources": [
-   "词径记-外研社八上-单元词表-v3.json",
+   "词径记-外研社八上-单元词表-v4.json",
    "词径记-外研社八下-单元词表-v4.json",
    "词径记-外研社九上-单元词表-v4.json"
   ],
@@ -92,7 +92,7 @@
    {
     "volume_id": "wys_2024:8A",
     "grade_label": "八年级上册",
-    "source": "词径记-外研社八上-单元词表-v3.json",
+    "source": "词径记-外研社八上-单元词表-v4.json",
     "acceptance": "有条件通过",
     "entries_total": 306,
     "entries_imported": 256,
