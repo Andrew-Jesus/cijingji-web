@@ -11,7 +11,7 @@
   "default_unit_id": "wys_2024:8A:U1",
   "confidence": 0.95,
   "is_verified": true,
-  "content_version": "b8feaf630d47",
+  "content_version": "5575364a2cb9",
   "acceptance": [
    {
     "volume_id": "wys_2024:8A",
@@ -28,8 +28,8 @@
     "effective": null,
     "rule": null,
     "result": "有条件通过",
-    "note": "① 拼写 / 音标 / 词性 / 单元归属四项达 100% 覆盖且差异项全部回原图裁定；② 释义字段缺「逐条机器正校」方法，仅做到「机器筛 + 残差回图」，属未覆盖项；③ is_core 有 13 条依赖人工判读。",
-    "why_not_full_pass": "启用「重点词筛选」前需知晓 is_core 的人工判读成分；释义字段的残留风险已记录，建议后续以「全量回图」补齐。"
+    "note": "① 拼写 / 音标 / 词性 / 单元归属 / 中文释义 五项均达 100% 覆盖，差异项全部回原图裁定；② 中文释义已于 2026-10-03 由「机器筛 + 残差回图」升级为「两路 OCR 全量正校 + 差异项/冲突项/低置信项回图」，不再是未覆盖项；③ is_core 有 13 条依赖人工判读。",
+    "why_not_full_pass": "启用「重点词筛选」前需知晓 is_core 的人工判读成分。释义字段已无未覆盖项；残余盲区为「OCR 与转录同时漏抄同一处」，已用两路独立预处理压低概率，详见《词径记-外研社八下九上-meaning_zh全量回图专项复核报告-v1.md》。"
    },
    {
     "volume_id": "wys_2024:9A",
@@ -37,8 +37,8 @@
     "effective": null,
     "rule": null,
     "result": "有条件通过",
-    "note": "① 拼写 / 音标 / 词性 / 单元归属四项达 100% 覆盖且差异项全部回原图裁定；② 释义字段缺「逐条机器正校」方法，仅做到「机器筛 + 零重叠残差回图」，属未覆盖项；③ is_core 有 7 条依赖人工判读。",
-    "why_not_full_pass": "启用「重点词筛选」前需知晓 is_core 的人工判读成分；释义字段的残留风险已记录，建议后续以「全量回图」补齐。"
+    "note": "① 拼写 / 音标 / 词性 / 单元归属 / 中文释义 五项均达 100% 覆盖，差异项全部回原图裁定；② 中文释义已于 2026-10-03 由「机器筛 + 残差回图」升级为「两路 OCR 全量正校 + 差异项/冲突项/低置信项回图」，不再是未覆盖项；③ is_core 有 7 条依赖人工判读。",
+    "why_not_full_pass": "启用「重点词筛选」前需知晓 is_core 的人工判读成分。释义字段已无未覆盖项；残余盲区为「OCR 与转录同时漏抄同一处」，已用两路独立预处理压低概率，详见《词径记-外研社八下九上-meaning_zh全量回图专项复核报告-v1.md》。"
    }
   ],
   "honest_note": "外研社版初中英语（2024 版）八年级上册 / 八年级下册 / 九年级上册：拼写、音标、词性、释义、页码都对着课本逐条核过，没发现错。只有「哪些是重点词」还判不准（课本是用加粗标的，机器认不出字重），所以暂时不提供重点词筛选。"
@@ -46,11 +46,11 @@
  "report": {
   "sources": [
    "词径记-外研社八上-单元词表-v3.json",
-   "词径记-外研社八下-单元词表-v3.json",
-   "词径记-外研社九上-单元词表-v3.json"
+   "词径记-外研社八下-单元词表-v4.json",
+   "词径记-外研社九上-单元词表-v4.json"
   ],
-  "built_at": "2026-10-03",
-  "content_version": "b8feaf630d47",
+  "built_at": "2026-10-04",
+  "content_version": "5575364a2cb9",
   "acceptance": [
    {
     "volume_id": "wys_2024:8A",
@@ -62,13 +62,13 @@
     "volume_id": "wys_2024:8B",
     "grade_label": "八年级下册",
     "result": "有条件通过",
-    "why_not_full_pass": "启用「重点词筛选」前需知晓 is_core 的人工判读成分；释义字段的残留风险已记录，建议后续以「全量回图」补齐。"
+    "why_not_full_pass": "启用「重点词筛选」前需知晓 is_core 的人工判读成分。释义字段已无未覆盖项；残余盲区为「OCR 与转录同时漏抄同一处」，已用两路独立预处理压低概率，详见《词径记-外研社八下九上-meaning_zh全量回图专项复核报告-v1.md》。"
    },
    {
     "volume_id": "wys_2024:9A",
     "grade_label": "九年级上册",
     "result": "有条件通过",
-    "why_not_full_pass": "启用「重点词筛选」前需知晓 is_core 的人工判读成分；释义字段的残留风险已记录，建议后续以「全量回图」补齐。"
+    "why_not_full_pass": "启用「重点词筛选」前需知晓 is_core 的人工判读成分。释义字段已无未覆盖项；残余盲区为「OCR 与转录同时漏抄同一处」，已用两路独立预处理压低概率，详见《词径记-外研社八下九上-meaning_zh全量回图专项复核报告-v1.md》。"
    }
   ],
   "counts": {
@@ -138,7 +138,7 @@
    {
     "volume_id": "wys_2024:8B",
     "grade_label": "八年级下册",
-    "source": "词径记-外研社八下-单元词表-v3.json",
+    "source": "词径记-外研社八下-单元词表-v4.json",
     "acceptance": "有条件通过",
     "entries_total": 258,
     "entries_imported": 211,
@@ -184,7 +184,7 @@
    {
     "volume_id": "wys_2024:9A",
     "grade_label": "九年级上册",
-    "source": "词径记-外研社九上-单元词表-v3.json",
+    "source": "词径记-外研社九上-单元词表-v4.json",
     "acceptance": "有条件通过",
     "entries_total": 254,
     "entries_imported": 237,
@@ -7945,7 +7945,7 @@
    "id": "s:spiderman:primary",
    "word_id": "w:spiderman",
    "pos": "n.",
-   "cn_meaning": "“蜘蛛人”",
+   "cn_meaning": "“蜘蛛人”（高空作业工）",
    "is_primary": true
   },
   {
@@ -8190,7 +8190,7 @@
    "id": "s:promise:primary",
    "word_id": "w:promise",
    "pos": "n.",
-   "cn_meaning": "保证，承诺，诺言",
+   "cn_meaning": "保证，承诺，诺言；许诺，保证，答应",
    "is_primary": true
   },
   {

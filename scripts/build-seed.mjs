@@ -53,10 +53,22 @@ const flags = new Map(
 );
 const positional = args.filter((a) => !a.startsWith("--"));
 
-/** 默认三册。顺序 = 册次顺序 = 产品选择面板里的顺序 */
-const DEFAULT_VOLUMES = ["八上", "八下", "九上"].map((tag) =>
-  path.join(__dirname, `../../词径记-外研社${tag}-单元词表-v3.json`),
-);
+/** 各册当前生效的词表版本 —— 哪册做了修订就只升哪册 */
+const VOLUME_VERSIONS = { 八上: "v3", 八下: "v4", 九上: "v4" };
+
+/**
+ * 默认三册。顺序 = 册次顺序 = 产品选择面板里的顺序。
+ *
+ * 兜底：正式文件不在时，允许读**同一版本**的 `.new`（落地脚本还没顶替进来时用）。
+ * 只兜到同一个版本号，**绝不退回更老的版本** —— 那是静默降级，比报错更糟。
+ */
+function volumeFile(tag) {
+  const base = path.join(__dirname, `../../词径记-外研社${tag}-单元词表-${VOLUME_VERSIONS[tag]}.json`);
+  if (fs.existsSync(base)) return base;
+  const pending = `${base}.new`;
+  return fs.existsSync(pending) ? pending : base;
+}
+const DEFAULT_VOLUMES = ["八上", "八下", "九上"].map(volumeFile);
 
 const OUT = path.resolve(__dirname, flags.get("out") ?? "../lib/db/seed-data.json");
 const curriculumCode = flags.get("curriculum") ?? "wys_2024";
