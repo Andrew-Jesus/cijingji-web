@@ -193,18 +193,35 @@ export interface IslandFormInput {
   speaking: boolean;
   /** 有件正在跑的事刚有动静（今日任务进度刚跳一格，且在 `LIVE_HOLD_MS` 窗口内） */
   live: boolean;
+  /**
+   * 页面请它**让位** —— 眼前这块内容要读，别挡字。
+   *
+   * 为什么这件事路由层判不出来：`/study/<id>` 这个路由**同时**是"正在答题"和
+   * "答完了在看结果"，前者要那颗球（那时它最有用），后者要它让开。
+   * 所以只能由页面自己说 —— 见 `FinishedView` 里的 `setQuiet(true)`。
+   *
+   * ⚠️ 它必须排在 `mini` **之前**：完成页恰好也落在 `mini` 路由上，
+   * 顺序一反，让位就永远没机会生效（静默失效，页面上看不出来）。
+   */
+  quiet: boolean;
 }
 
 /**
  * 这一刻用哪一档。
  *
  * ── 优先级（2026-09-26 重排，为了"正在跑的事"能露脸）────────────
- *   **你要看细节（open）＞ 你收起了它（tucked）＞ 页面不让露面（hidden）**
- *   ，之后分成两条路：
+ *   **你要看细节（open）＞ 你收起了它（tucked）＞ 页面不让露面（hidden）
+ *   ＞ 页面请它让位（quiet）**，之后分成两条路：
  *
  *     · **背词专注中（mini）**：横幅照旧一个字不说（老行为，不动），
  *       但「正在跑的任务」允许露出一枚安静的小岛 —— 见下；
  *     · **不在专注页**：提醒压过进度 —— 正在跑任务时网络断了，先报断网。
+ *
+ * ── 「让位」为什么在 2026-10-17 加（完成页挡字）─────────────────
+ * 44px 的球贴在左边缘（x = 20~64），而卡片里文字从 x ≈ 36 开始 ——
+ * 答题时它有用，**答完看结果时它就正好压在单词上**。缩成 16px 的小点后它落在
+ * x = 20~36，与文字**相切不重叠**，而热区仍然是 44（点得到）。
+ * 这件事只能由页面声明（`quiet`），因为同一个路由下有两种阶段。
  *
  * ── 为什么"正在跑的事"能压过 mini，而横幅不能 ───────────────────
  * 这条是 Andy 2026-09-26 点头定的。`mini` 当初的目的是"背词时别被**横幅**打断"，
@@ -229,6 +246,10 @@ export function islandForm(input: IslandFormInput): IslandForm {
   if (input.open) return "card";
   if (input.tucked) return "dot";
   if (input.presentation === "hidden") return "dot";
+  // 「让位」夹在这里：**排在 `mini` 之前**（完成页也在 mini 路由上，反了就永远不生效），
+  // 但**排在"要说话"之前不成立** —— 所以它自己把 speaking 让出一条路：
+  // 断网这类 warning/danger 仍然登台，其余时候安静缩成小点。
+  if (input.quiet) return input.speaking ? "banner" : "dot";
   if (input.presentation === "mini") return input.live ? "island" : "ball";
   if (input.speaking) return "banner";
   if (input.live) return "island";

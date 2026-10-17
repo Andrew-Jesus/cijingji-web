@@ -84,7 +84,7 @@ import {
 } from "@/lib/console/dock";
 import { updatePrefs, usePrefs } from "@/lib/console/prefs";
 import { probeRuntime, type RuntimeSnapshot } from "@/lib/console/probe";
-import { pushNotice, useConsoleAlert, useConsoleStore, useTodayProgress } from "@/lib/console/store";
+import { pushNotice, useConsoleAlert, useConsoleQuiet, useConsoleStore, useTodayProgress } from "@/lib/console/store";
 import { db } from "@/lib/db/local";
 import { ensureSeeded } from "@/lib/db/seed";
 import {
@@ -160,6 +160,11 @@ export function ConsoleDock() {
   const notices = useConsoleStore((s) => s.notices);
   const alerting = useConsoleAlert();
   const today = useTodayProgress();
+  /**
+   * 页面请它让位（当前页要读字）。完成页 / 回顾页这类长内容页会置 true ——
+   * 规则本身在 `lib/island/form.ts`（纯函数，有单测），这里只负责把它传下去。
+   */
+  const quiet = useConsoleQuiet();
 
   const [runtime, setRuntime] = useState<RuntimeSnapshot | null>(null);
   /** 拖拽中的实时位置（元素**中心**的视口坐标 + 它自己多大）。松手后清空，位置交回 prefs.spot */
@@ -223,6 +228,7 @@ export function ConsoleDock() {
     open,
     speaking: speakable !== null,
     live,
+    quiet,
   };
   const form = islandForm(formInput);
   const shape = islandShape(form);
@@ -538,11 +544,22 @@ export function ConsoleDock() {
    * 中段收细挂在这里（材料层）。它不能挂在外层定位层上 —— 位移在那儿，
    * 一个元素身上同时既有 `translate` 又播 `scaleY` 关键帧会互相覆盖。
    */
+  /**
+   * 「让位」态：页面要读字，它退成一颗**淡淡的**小点。
+   *
+   * 两个条件缺一不可：
+   *   · `shape === "dot"` —— 让位时若有警告要说话，形状是 banner（横幅该醒目，不能淡）；
+   *   · `!tucked` —— 用户自己收起的小点是他主动放的，不该替他再调暗。
+   */
+  const yielding = quiet && shape === "dot" && !tucked;
+
   const materialStyle: CSSProperties = {
     width: box.matW,
     height: box.matH,
     borderRadius: box.radius,
     transition: motion.material,
+    // 16px 已经压在卡片边距里、碰不到字；再淡一档是"我在，但你可以专心读"
+    ...(yielding ? { opacity: 0.6 } : null),
     ...(squashSeq > 0 && motion.squash
       ? { animation: `${squashSeq % 2 === 0 ? "island-squash-a" : "island-squash-b"} ${SQUASH_MS}ms var(--ease-soft)` }
       : null),

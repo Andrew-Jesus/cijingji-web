@@ -43,7 +43,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
 import type { AiResponse } from "@/lib/ai/contract";
 import { fallbackNote, templateExample } from "@/lib/ai/fallback";
-import { pushNotice, setTodayProgress } from "@/lib/console/store";
+import { pushNotice, requestQuiet, setTodayProgress } from "@/lib/console/store";
 import { db } from "@/lib/db/local";
 import { getProfile, isOnboarded } from "@/lib/db/repo";
 import { DATA_HONEST_NOTE, ensureSeeded } from "@/lib/db/seed";
@@ -1087,6 +1087,17 @@ function FinishedView({
   /** 本轮每一条作答。归因只认原始记录，不认"已经算好的摘要" —— 摘要里没有错因 */
   records: ReviewRecord[];
 }) {
+  /*
+    这一屏是**用来读的**：主卡下面全是字，而小词（44px）正好压在左边那列单词上。
+    所以请它退成小点（16px，落在卡片边距里、碰不到字），离开这一屏时再请回来。
+
+    ⚠️ 清理函数不能省：少了它，回首页时它还缩着，看着像"小词变小了"。
+  */
+  useEffect(() => {
+    requestQuiet(true);
+    return () => requestQuiet(false);
+  }, []);
+
   // 纯函数、同步、几十条数据 —— 不值得上 useMemo，也不会碰网络。
   const attribution = aggregateErrors(records);
   // 只列真的出现过的错因，并按条数从多到少。sort 是稳定的，同分保持固定顺序。

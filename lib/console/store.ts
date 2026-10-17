@@ -25,6 +25,11 @@ interface ConsoleStore {
   notices: Notice[];
   open: boolean;
   /**
+   * 页面请它让位 —— 眼前这块内容要读，别挡字（见 `lib/island/form.ts` 的 `quiet`）。
+   * 只有"看结果 / 看回顾"这类页面会置 true；离开时由页面自己清掉。
+   */
+  quiet: boolean;
+  /**
    * 今日进度（小词外圈那道环读这个数）。
    * null = 还没排出今天的任务 —— 首页排完后会写进来。
    * 由首页写入而不是小词自己去算，是为了**避免两处各算一遍**（口径会飘）。
@@ -32,6 +37,7 @@ interface ConsoleStore {
   today: TodayProgress | null;
   push(input: NoticeInput): void;
   setOpen(next: boolean): void;
+  setQuiet(next: boolean): void;
   toggle(): void;
   clear(): void;
   setToday(next: TodayProgress | null): void;
@@ -63,12 +69,14 @@ function nextNoticeId(): string {
 export const useConsoleStore = create<ConsoleStore>((set) => ({
   notices: [],
   open: false,
+  quiet: false,
   today: null,
   push: (input) =>
     set((s) => ({
       notices: insertNotice(s.notices, makeNotice(input, nextNoticeId(), new Date().toISOString())),
     })),
   setOpen: (open) => set({ open }),
+  setQuiet: (quiet) => set({ quiet }),
   toggle: () => set((s) => ({ open: !s.open })),
   clear: () => set({ notices: [] }),
   setToday: (today) => set({ today }),
@@ -86,6 +94,29 @@ export function pushNotice(input: NoticeInput): void {
 /** 有没有 alert 级提示（悬浮球据此亮光环）。返回布尔值，引用稳定，不会引起多余重渲染 */
 export function useConsoleAlert(): boolean {
   return useConsoleStore((s) => hasAlert(s.notices));
+}
+
+/**
+ * 页面请小词让位 —— 当前页要读字，别挡着（2026-10-17 为完成页加）。
+ *
+ * 页面里这样用，**一定要在卸载时清掉**，否则回到首页它还缩着：
+ * ```
+ * useEffect(() => {
+ *   requestQuiet(true);
+ *   return () => requestQuiet(false);
+ * }, []);
+ * ```
+ *
+ * 为什么不做成"路由判断"：`/study/<id>` 既是"正在答题"也是"答完看结果"，
+ * 两个阶段要的样子相反 —— 只有页面自己知道自己走到哪一步了。
+ */
+export function requestQuiet(on: boolean): void {
+  useConsoleStore.getState().setQuiet(on);
+}
+
+/** 当前是否处在"让位"状态。返回布尔值，引用稳定，不会引起多余重渲染 */
+export function useConsoleQuiet(): boolean {
+  return useConsoleStore((s) => s.quiet);
 }
 
 /** 最重的告警级别，给状态灯定颜色 */

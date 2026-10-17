@@ -54,6 +54,7 @@ const BASE = {
   open: false,
   speaking: false,
   live: false,
+  quiet: false,
 } as const;
 
 /** 非 dot 的三档 —— "厚度恒定"那条硬规则管的就是它们 */
@@ -110,29 +111,54 @@ describe("islandForm —— 该长什么样", () => {
     expect(islandForm({ ...BASE, speaking: true, live: true })).toBe("banner");
   });
 
-  it("优先级：卡片 ＞ 收起 ＞ 页面隐藏 ＞（背词 / 提醒 / 进度）＞ 常驻", () => {
+  it("优先级：卡片 ＞ 收起 ＞ 页面隐藏 ＞ 让位 ＞（背词 / 提醒 / 进度）＞ 常驻", () => {
     // 一次把输入全打开，答案只能是优先级最高的那个
-    expect(
-      islandForm({ presentation: "mini", tucked: true, open: true, speaking: true, live: true }),
-    ).toBe("card");
-    expect(
-      islandForm({ presentation: "mini", tucked: true, open: false, speaking: true, live: true }),
-    ).toBe("dot");
-    expect(
-      islandForm({ presentation: "hidden", tucked: false, open: false, speaking: true, live: true }),
-    ).toBe("dot");
+    const ALL = { tucked: true, open: true, speaking: true, live: true, quiet: true } as const;
+    expect(islandForm({ ...ALL, presentation: "mini" })).toBe("card");
+    expect(islandForm({ ...ALL, presentation: "mini", open: false })).toBe("dot");
+    expect(islandForm({ ...ALL, presentation: "hidden", open: false, tucked: false })).toBe("dot");
     // 背词 + 进度 → 岛（而不是球）
     expect(
-      islandForm({ presentation: "mini", tucked: false, open: false, speaking: false, live: true }),
+      islandForm({ presentation: "mini", tucked: false, open: false, speaking: false, live: true, quiet: false }),
     ).toBe("island");
     // 背词 + 提醒（没进度）→ 仍是球，一个字不说
     expect(
-      islandForm({ presentation: "mini", tucked: false, open: false, speaking: true, live: false }),
+      islandForm({ presentation: "mini", tucked: false, open: false, speaking: true, live: false, quiet: false }),
     ).toBe("ball");
     // 不在专注页：提醒赢
     expect(
-      islandForm({ presentation: "full", tucked: false, open: false, speaking: true, live: true }),
+      islandForm({ presentation: "full", tucked: false, open: false, speaking: true, live: true, quiet: false }),
     ).toBe("banner");
+  });
+
+  /*
+    ── 「让位」（2026-10-17，完成页挡字）──────────────────────────
+    病根是几何：44px 的球贴左边缘是 x = 20~64，而卡片里文字从 x ≈ 36 开始 ——
+    答题时它有用，**答完看结果时它就正好压在前几个单词上**（截图见 B2 那一轮）。
+    缩成 16px 的小点后它落在 x = 20~36，与文字**相切不重叠**；
+    热区仍然是 44（`islandBox("dot").hitInset`），所以照样点得到。
+  */
+  it("★ 页面请它让位 → 小点（而且**压过 mini**）", () => {
+    expect(islandForm({ ...BASE, quiet: true })).toBe("dot");
+    // ⚠️ 这一条是这次改动最容易写错的地方：完成页恰好也在 mini 路由上。
+    // 顺序写反的话函数返回 ball，页面上只是"还是挡着"，不报错、不崩溃。
+    expect(islandForm({ ...BASE, presentation: "mini", quiet: true })).toBe("dot");
+    // 看结果时那块地方更不能被拉长的岛占住
+    expect(islandForm({ ...BASE, presentation: "mini", live: true, quiet: true })).toBe("dot");
+  });
+
+  it("让位时该登台的照样登台 —— 断网不是「别打扰我」", () => {
+    expect(islandForm({ ...BASE, quiet: true, speaking: true })).toBe("banner");
+  });
+
+  it("让位压不过用户自己收起的小点", () => {
+    expect(islandForm({ ...BASE, quiet: true, tucked: true })).toBe("dot");
+  });
+
+  it("★ 点开面板时照常变回 44px 的球 —— 让位态也得点得准", () => {
+    expect(islandForm({ ...BASE, quiet: true, open: true })).toBe("card");
+    // card 不是材料：材料仍是那颗球（面板的把手），见 islandShape
+    expect(islandShape(islandForm({ ...BASE, quiet: true, open: true }))).toBe("ball");
   });
 });
 

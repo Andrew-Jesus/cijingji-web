@@ -22,6 +22,7 @@ const IDLE: IslandFormInput = {
   open: false,
   speaking: false,
   live: false,
+  quiet: false,
 };
 
 describe("stageFor —— 这一刻它在哪个家", () => {
