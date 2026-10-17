@@ -227,9 +227,14 @@ export default function ReviewPage() {
             <p className="text-tertiary text-[11px] tracking-[0.08em]">反复错的词</p>
             {attribution.stubborn.length === 0 ? (
               <p className="text-primary mt-3 text-sm leading-relaxed">
+                {/* 三种"空"的原因不同，说的也得不同 ——
+                    曾经在这里把所有空都写成「错的都是一次性的」，
+                    结果零错题时也这么讲，等于凭空说用户错过。 */}
                 {attribution.confidence === "too_few_samples"
                   ? "练得还太少，暂时看不出哪个词在反复错。"
-                  : "这 " + days + " 天没有反复错的词 —— 错的都是一次性的。"}
+                  : attribution.wrong === 0
+                    ? `这 ${days} 天没有错词，也就没有要单独盯的词。`
+                    : `这 ${days} 天没有反复错的词 —— 错的都是一次性的。`}
               </p>
             ) : (
               <>
