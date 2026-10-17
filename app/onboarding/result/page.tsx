@@ -15,7 +15,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { pushNotice } from "@/lib/console/store";
+import { pushNotice, requestQuiet } from "@/lib/console/store";
 import { db } from "@/lib/db/local";
 import { getProfile } from "@/lib/db/repo";
 import { DATA_HONEST_NOTE, ensureSeeded } from "@/lib/db/seed";
@@ -37,7 +37,18 @@ interface ResultData {
   dailyMinutes: number;
   interests: string[];
   /** null = 这次没做自测（走了降级路径） */
-  quiz: { correct: number; total: number; level: number; label: string; note: string; byUnit: UnitBreakdown[] } | null;
+  quiz: {
+    correct: number;
+    total: number;
+    /** 实际作答数（跳过的不算） */
+    answered: number;
+    /** 跳过 / 漏答的题数 */
+    skipped: number;
+    level: number;
+    label: string;
+    note: string;
+    byUnit: UnitBreakdown[];
+  } | null;
   fallbackLevelLabel: string;
   summary: string;
   spellingRequired: boolean;
@@ -60,6 +71,18 @@ export default function ResultPage() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
   const [copied, setCopied] = useState<"idle" | "ok" | "fail">("idle");
+
+  /**
+   * 请小词让位。
+   *
+   * 这一页从"你的安排"排到"反馈入口"，比一屏还长；44px 的球固定在左下角，
+   * 滚动时正好压在卡片文字左端（和学习完成页同一个几何冲突）。
+   * 卸载时必须撤销 —— 少了清理函数，回首页它还缩着，像"小词变小了"。
+   */
+  useEffect(() => {
+    requestQuiet(true);
+    return () => requestQuiet(false);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,6 +133,8 @@ export default function ResultPage() {
             quiz = {
               correct: scored.correct,
               total: scored.total,
+              answered: scored.answered,
+              skipped: scored.skipped,
               level: scored.level,
               label: scored.label,
               note: scored.note,
@@ -171,7 +196,13 @@ export default function ResultPage() {
       `目标：${d.goalLabel}${d.remainingText ? `（${d.remainingText}）` : ""}`,
       `每天：${d.dailyMinutes} 分钟 → ${d.perDay} 个词`,
       `兴趣：${d.interests.length ? d.interests.map(interestLabel).join("、") : "（没选）"}`,
-      `自测：${d.quiz ? `${d.quiz.correct} / ${d.quiz.total} → ${d.quiz.label}` : "未做"}`,
+      `自测：${
+        d.quiz
+          ? d.quiz.skipped > 0
+            ? `答了 ${d.quiz.answered} / ${d.quiz.total} 题（跳过 ${d.quiz.skipped} 题），答对 ${d.quiz.correct} 题 → ${d.quiz.label}`
+            : `答对 ${d.quiz.correct} / ${d.quiz.total} → ${d.quiz.label}`
+          : "未做"
+      }`,
       "",
       "我发现的问题：",
       feedbackText.trim() || "（在这里写）",
@@ -234,7 +265,9 @@ export default function ResultPage() {
         {d.quiz ? (
           <>
             <p className="text-primary mt-2.5 text-sm">
-              答对 {d.quiz.correct} / {d.quiz.total} · 起点定在{" "}
+              {d.quiz.skipped > 0
+                ? `${d.quiz.total} 题里答了 ${d.quiz.answered} 题（跳过 ${d.quiz.skipped} 题），答对 ${d.quiz.correct} 题 · 起点定在 `
+                : `答对 ${d.quiz.correct} / ${d.quiz.total} · 起点定在 `}
               <span className="font-medium">{d.quiz.label}</span>
             </p>
             <p className="text-secondary mt-2 text-xs leading-relaxed">{d.quiz.note}</p>
@@ -288,7 +321,13 @@ export default function ResultPage() {
           />
           <Diff
             title={`起点定在「${levelLabelText}」`}
-            why={d.quiz ? `自测答对 ${d.quiz.correct} / ${d.quiz.total}` : "这次没自测，取中间档"}
+            why={
+              d.quiz
+                ? d.quiz.skipped > 0
+                  ? `自测答了 ${d.quiz.answered} 题、对 ${d.quiz.correct} 题（跳过 ${d.quiz.skipped} 题）`
+                  : `自测答对 ${d.quiz.correct} / ${d.quiz.total}`
+                : "这次没自测，取中间档"
+            }
           />
         </ul>
       </section>

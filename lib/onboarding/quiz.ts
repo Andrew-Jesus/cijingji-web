@@ -39,6 +39,8 @@ import type { WordSnapshot } from "@/lib/scope/resolveScope";
 // PRNG 与洗牌只有一份实现（lib/util/random.ts）—— 学习页出题也用同一套。
 // 抄第二份的话，"同种子同结果"这条保证迟早会在一处被改坏而另一处不知道。
 import { mulberry32, shuffle } from "@/lib/util/random";
+// 自测专用释义口径（课本义太窄时改用通用义）——词库不动，只影响本文件出的题
+import { quizSenseFixFor } from "./quizSenseFix";
 
 export const QUIZ_SIZE = 20;
 export const OPTIONS_PER_QUESTION = 4;
@@ -199,7 +201,9 @@ export function buildQuiz(input: BuildQuizInput): QuizQuestion[] {
     const sense = primaryByWord.get(p.word_id);
     if (!word || !sense) continue;
 
-    const correct = sense.cn_meaning;
+    // 正确选项：登记过的窄义词用通用义（见 quizSenseFix.ts），其余照用课本义。
+    // 这只影响「自测怎么考」，学习卡片仍然显示课本义 —— 两件事不能混。
+    const correct = quizSenseFixFor(p.word_id) ?? sense.cn_meaning;
     const distractors = pickDistractors(p.word_id, poolByUnitMeanings.get(p.unit_id) ?? [], correct);
 
     // 数据太小时可能连一个干扰项都凑不出 —— 那种题不该出现在卷子上
@@ -279,13 +283,22 @@ export interface UnitBreakdown {
   total: number;
 }
 
-export interface QuizResult {
+/** 「答对 / 参与计分的题数」→ 档位。单独一层是为了能不含跳过信息地单测边界值 */
+export interface BandResult {
+  /** 参与计分的题数（**不是**卷子总题数 —— 跳过的不进分母，原因见 `scoreQuiz`） */
   total: number;
   correct: number;
   ratio: number;
   level: Level;
   label: string;
   note: string;
+}
+
+export interface QuizResult extends BandResult {
+  /** 实际作答的题数（点了「不确定」或漏答的不算） */
+  answered: number;
+  /** 跳过 / 漏答的题数 */
+  skipped: number;
   by_unit: UnitBreakdown[];
 }
 
@@ -302,7 +315,7 @@ export function scoreAnswers(
 }
 
 /** 得分率 → 档位（纯计算，便于单独测边界值） */
-export function bandFor(correct: number, total: number): Omit<QuizResult, "by_unit"> {
+export function bandFor(correct: number, total: number): BandResult {
   const ratio = total > 0 ? correct / total : 0;
   const band = LEVEL_BANDS.find((b) => ratio <= b.max_ratio) ?? LEVEL_BANDS[LEVEL_BANDS.length - 1];
   return {
@@ -316,12 +329,55 @@ export function bandFor(correct: number, total: number): Omit<QuizResult, "by_un
 }
 
 /**
+ * 至少要答满这个比例，结论才算数。
+ *
+ * 为什么是「一半」：20 题里答 9 题、跳过 11 题，这 9 题撑不起一个档位判断
+ * （四选一瞎猜都能对 2 题，样本太小）。这时候**宁可说"看不出"**，
+ * 也不能因为跳过太多就把人按低档排 —— 那会给他一套过慢的计划。
+ */
+export const MIN_ANSWERED_RATIO = 0.5;
+
+/** 作答太少时的兜底：按中等，并且把"为什么没结论"说清楚 */
+function insufficientBand(correct: number, answered: number, skipped: number): BandResult {
+  const label = levelLabel(2);
+  return {
+    total: answered,
+    correct,
+    ratio: answered > 0 ? correct / answered : 0,
+    level: 2,
+    label,
+    note: `这次跳过了 ${skipped} 题，剩下的太少，看不出准确水平 —— 先按「${label}」安排，练几天我们会自己调。`,
+  };
+}
+
+/**
  * 判分 + 按单元汇总。
  *
  * **按 `unit_id` 分组，不按 `unit_code`** —— 后者三册重号（见文件头注释）。
+ *
+ * ── 跳过怎么算（2026-10-17 改）────────────────────────────────
+ *
+ * 用户能点「这个词我不确定」，那种题**不进分母**。
+ * 理由：自测是量「认不认识」，不是考试。遇到课本窄义（condition 记作「长期疾病」）
+ * 时诚实说"不确定"的人，不该被当成答错 —— 否则越诚实的人分越低。
+ * 分母因此是 `answered`（实际作答数），不是卷子总题数。
  */
 export function scoreQuiz(questions: QuizQuestion[], answers: (number | null)[]): QuizResult {
-  const { correct, total } = scoreAnswers(questions, answers);
+  const { correct } = scoreAnswers(questions, answers);
+  const total = questions.length;
+  const answered = questions.reduce(
+    (n, _q, i) => (typeof answers[i] === "number" ? n + 1 : n),
+    0,
+  );
+  const skipped = total - answered;
+
+  const minAnswered = Math.ceil(total * MIN_ANSWERED_RATIO);
+  const base: BandResult =
+    total > 0 && answered >= Math.max(1, minAnswered)
+      ? bandFor(correct, answered)
+      : total > 0
+        ? insufficientBand(correct, answered, skipped)
+        : bandFor(0, 0);
 
   const byUnitMap = new Map<string, UnitBreakdown>();
   questions.forEach((q, i) => {
@@ -333,7 +389,9 @@ export function scoreQuiz(questions: QuizQuestion[], answers: (number | null)[])
     byUnitMap.set(q.unit_id, row);
   });
 
-  return { ...bandFor(correct, total), by_unit: [...byUnitMap.values()] };
+  // `total` 放在 `...base` 之后：`bandFor` 里的 total 是分母（answered），
+  // 对外的 total 要的是**卷子题数** —— 结果页要显示"20 题里…"。
+  return { ...base, total, answered, skipped, by_unit: [...byUnitMap.values()] };
 }
 
 export function levelLabel(level: number): string {

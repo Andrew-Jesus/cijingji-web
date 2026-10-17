@@ -115,16 +115,8 @@ export default function QuizPage() {
     }
   }
 
-  function select(optionIndex: number) {
-    if (locked || submitting) return;
-
-    setPicked(optionIndex);
-    setLocked(true);
-
-    const next = [...answers];
-    next[index] = optionIndex;
-    setAnswers(next);
-
+  /** 选中 → 200ms 后进下一题（或提交）。抽出来是因为「跳过」走同一条推进路径 */
+  function advanceWith(next: (number | null)[]) {
     timer.current = setTimeout(() => {
       const nextIndex = index + 1;
       if (nextIndex < questions.length) {
@@ -135,6 +127,36 @@ export default function QuizPage() {
         void submit(next, questions);
       }
     }, ADVANCE_DELAY_MS);
+  }
+
+  function select(optionIndex: number) {
+    if (locked || submitting) return;
+
+    setPicked(optionIndex);
+    setLocked(true);
+
+    const next = [...answers];
+    next[index] = optionIndex;
+    setAnswers(next);
+    advanceWith(next);
+  }
+
+  /**
+   * 「不确定」—— 这题不计分。
+   *
+   * 为什么必须有这个出口：自测的释义取的是**课本那一课的语境义**，
+   * 有时窄得没法回答（`condition` 在八上记作「长期疾病」，而人人想到的是「条件」）。
+   * 让人诚实说"我不确定"，比逼他从四个都不对的选项里瞎挑一个更接近真相。
+   * 跳过**不进分母**（见 `scoreQuiz`），否则越诚实的人分越低。
+   */
+  function skip() {
+    if (locked || submitting) return;
+
+    setLocked(true);
+    const next = [...answers];
+    next[index] = null; // 回看时不该还留着上一次的选中态
+    setAnswers(next);
+    advanceWith(next);
   }
 
   function goBack() {
@@ -217,10 +239,19 @@ export default function QuizPage() {
                 />
               ))}
             </div>
+
+            <button
+              type="button"
+              onClick={skip}
+              disabled={locked || submitting}
+              className="text-tertiary ease-soft w-full rounded-md py-2.5 text-xs underline underline-offset-4 transition-opacity duration-200 disabled:opacity-40"
+            >
+              这个词我不确定
+            </button>
           </div>
 
-          <p className="text-tertiary mt-5 text-xs leading-relaxed">
-            不认识的凭感觉选就好，不用纠结 —— 我们要的是真实情况，不是满分。
+          <p className="text-tertiary mt-4 text-xs leading-relaxed">
+            题目问的是课本里这个词的用法。拿不准就点「不确定」，跳过不算错、也不拉低档位。
             {submitting ? "正在算结果…" : ""}
           </p>
 

@@ -13,6 +13,7 @@ import {
   scoreQuiz,
   type QuizQuestion,
 } from "@/lib/onboarding/quiz";
+import { QUIZ_SENSE_FIX, quizSenseFixFor } from "@/lib/onboarding/quizSenseFix";
 
 const bundle = bundleJson as unknown as {
   units: Unit[];
@@ -124,12 +125,29 @@ describe("buildQuiz（跑在真实样张数据上）", () => {
     }
   });
 
-  it("正确答案必在选项里，且 answer_index 指向该词的 primary 释义", () => {
+  it("正确答案必在选项里；登记过窄义的词用通用义，其余用 primary 释义", () => {
     for (const q of questions) {
       const sense = primaryByWord.get(q.word_id);
       expect(sense).toBeDefined();
-      expect(q.options[q.answer_index]).toBe(sense!.cn_meaning);
-      expect(q.options).toContain(sense!.cn_meaning);
+
+      // 修正表优先（理由见 quizSenseFix.ts）：课本义太窄时，自测改用通用义。
+      // 这里刻意写成"查表 → 回退 primary"，与 buildQuiz 的口径一致 ——
+      // 若哪天两处口径不一致，这条会立刻红。
+      const expected = quizSenseFixFor(q.word_id) ?? sense!.cn_meaning;
+
+      expect(q.options[q.answer_index]).toBe(expected);
+      expect(q.options).toContain(expected);
+    }
+  });
+
+  it("修正表里的每个词都还在词库里（换册次后不许悄悄失效）", () => {
+    expect(QUIZ_SENSE_FIX.length).toBeGreaterThan(0);
+    for (const fix of QUIZ_SENSE_FIX) {
+      expect(primaryByWord.has(fix.word_id), `词库里找不到 ${fix.word_id}`).toBe(true);
+      // 通用义不能和课本义一模一样 —— 那说明这条登记是多余的
+      expect(fix.meaning).not.toBe(fix.textbook);
+      // 必须写明出处，禁止"凭印象编"
+      expect(fix.source.length).toBeGreaterThan(0);
     }
   });
 
@@ -338,10 +356,15 @@ describe("scoreQuiz", () => {
     expect(r.level).toBe(3);
   });
 
-  it("全部不答 → 第 1 档，且 by_unit 全 0", () => {
+  it("全部跳过 → 不判「入门」，按中等兜底（样本不足）", () => {
+    // 口径变更（2026-10-17）：全跳过的若判「入门」，会给他一套最慢的计划，
+    // 而真相是"我们不知道" —— 不知道就该取中间，而不是往低处猜。
     const r = scoreQuiz(questions, questions.map(() => null));
     expect(r.correct).toBe(0);
-    expect(r.level).toBe(1);
+    expect(r.answered).toBe(0);
+    expect(r.skipped).toBe(questions.length);
+    expect(r.level).toBe(2);
+    expect(r.note).toContain("跳过");
     expect(r.by_unit.every((u) => u.correct === 0)).toBe(true);
   });
 
@@ -350,5 +373,51 @@ describe("scoreQuiz", () => {
     const r = scoreQuiz(questions, wrong);
     expect(r.correct).toBe(0);
     expect(r.level).toBe(1);
+  });
+});
+
+describe("跳过（点了「不确定」）", () => {
+  const questions = buildQuiz({ snapshot });
+
+  it("少量跳过：分母是实际作答数，跳过不算错", () => {
+    const answers: (number | null)[] = questions.map((q) => q.answer_index);
+    answers[0] = null; // 跳过第一题（这一题本来会答对）
+    const r = scoreQuiz(questions, answers);
+
+    expect(r.answered).toBe(questions.length - 1);
+    expect(r.skipped).toBe(1);
+    expect(r.correct).toBe(questions.length - 1);
+    expect(r.ratio).toBe(1); // 满了 —— 而不是 19/20 被拉低
+    expect(r.total).toBe(questions.length); // 对外要的仍是"卷子几题"
+    expect(r.level).toBe(3);
+  });
+
+  it("跳过太多（不足一半）→ 哪怕全对也只按中等，并说明原因", () => {
+    const half = Math.ceil(questions.length / 2);
+    const answers: (number | null)[] = questions.map((q, i) =>
+      i < half - 1 ? q.answer_index : null,
+    );
+    const r = scoreQuiz(questions, answers);
+
+    expect(r.answered).toBe(half - 1);
+    expect(r.level).toBe(2);
+    expect(r.note).toContain("跳过");
+  });
+
+  it("刚好答满一半 → 正常分档（边界含）", () => {
+    const half = Math.ceil(questions.length / 2);
+    const answers: (number | null)[] = questions.map((q, i) =>
+      i < half ? q.answer_index : null,
+    );
+    const r = scoreQuiz(questions, answers);
+
+    expect(r.answered).toBe(half);
+    expect(r.level).toBe(3);
+  });
+
+  it("跳过不改变 by_unit 的题量（每个单元仍是出过几题算几题）", () => {
+    const r = scoreQuiz(questions, questions.map(() => null));
+    expect(r.by_unit.reduce((s, u) => s + u.total, 0)).toBe(questions.length);
+    expect(r.by_unit.reduce((s, u) => s + u.correct, 0)).toBe(0);
   });
 });
