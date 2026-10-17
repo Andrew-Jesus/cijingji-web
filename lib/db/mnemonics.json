@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "generated_at": null,
+    "generator": null,
+    "prompt_version": 1,
+    "requested": 0,
+    "count": 0,
+    "rejected": [],
+    "failed": [],
+    "uncovered_fields": ["助记质量（靠人工抽检）"]
+  },
+  "items": {}
+}
