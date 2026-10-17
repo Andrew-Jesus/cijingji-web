@@ -6,6 +6,7 @@ import {
   REMEDY,
   remedyFor,
   topErrorType,
+  withinLocalDays,
   type AttributionLog,
 } from "./attribution";
 
@@ -377,5 +378,77 @@ describe("remedyFor / 三种错因三种补救", () => {
 
   it("REMEDY 覆盖三种错因（不多不少）", () => {
     expect(Object.keys(REMEDY).sort()).toEqual(["confusion", "meaning", "spelling"]);
+  });
+});
+
+describe("withinLocalDays —— 回顾页的「最近 N 天」", () => {
+  /*
+    口径是**自然日**，不是"从此刻往前推 N×24 小时"。
+    后者会在半夜切进去半截 —— 同样说"近 7 天"，晚上 9 点和早上 9 点看到的数不一样。
+  */
+  const NOW = new Date(2026, 9, 17, 15, 0, 0); // 2026-10-17 15:00（本机时区）
+
+  function row(date: Date, id: string) {
+    return { word_id: id, created_at: date.toISOString() };
+  }
+
+  it("含今天；往回到第 N 天的 0 点，再往前一天就不要了", () => {
+    const rows = [
+      row(new Date(2026, 9, 17, 9, 0), "today"),
+      row(new Date(2026, 9, 16, 23, 0), "yesterday"),
+      row(new Date(2026, 9, 11, 0, 1), "first-day"), // 17 − 6 = 11，窗口第一天
+      row(new Date(2026, 9, 10, 23, 59), "too-old"), // 差一分钟到第 8 天
+    ];
+    expect(withinLocalDays(rows, 7, NOW).map((r) => r.word_id)).toEqual([
+      "today",
+      "yesterday",
+      "first-day",
+    ]);
+  });
+
+  it("days = 1 就是「只有今天」", () => {
+    const rows = [
+      row(new Date(2026, 9, 17, 0, 0), "today-start"),
+      row(new Date(2026, 9, 16, 23, 59), "yesterday-night"),
+    ];
+    expect(withinLocalDays(rows, 1, NOW).map((r) => r.word_id)).toEqual(["today-start"]);
+  });
+
+  it("days 传 0 / 负数 / 小数都夹到至少 1 天（0 天没有意义）", () => {
+    const rows = [
+      row(new Date(2026, 9, 17, 9, 0), "today"),
+      row(new Date(2026, 9, 15, 9, 0), "two-days-ago"),
+    ];
+    for (const days of [0, -3, 0.4]) {
+      expect(withinLocalDays(rows, days, NOW).map((r) => r.word_id)).toEqual(["today"]);
+    }
+  });
+
+  it("★ 没有时间 / 时间坏掉的记录不进窗口 —— 不知道哪天发生，就不能算进「最近 7 天」", () => {
+    const rows = [
+      { word_id: "no-time", created_at: null },
+      { word_id: "missing" },
+      { word_id: "broken", created_at: "not-a-date" },
+      row(new Date(2026, 9, 17, 9, 0), "good"),
+    ];
+    expect(withinLocalDays(rows, 7, NOW).map((r) => r.word_id)).toEqual(["good"]);
+  });
+
+  it("比今天还晚的时间不算（上界是明天 0 点，开区间）", () => {
+    const rows = [
+      row(new Date(2026, 9, 17, 23, 59), "tonight"),
+      row(new Date(2026, 9, 18, 0, 0), "tomorrow"),
+    ];
+    expect(withinLocalDays(rows, 7, NOW).map((r) => r.word_id)).toEqual(["tonight"]);
+  });
+
+  it("跨月也对 —— 往上退靠日期运算，不靠减毫秒", () => {
+    const nowNov = new Date(2026, 10, 3, 10, 0, 0); // 11-03
+    const rows = [
+      row(new Date(2026, 10, 3, 9, 0), "nov-3"),
+      row(new Date(2026, 9, 28, 9, 0), "oct-28"), // 11-03 往回 6 天 = 10-28
+      row(new Date(2026, 9, 27, 9, 0), "oct-27"),
+    ];
+    expect(withinLocalDays(rows, 7, nowNov).map((r) => r.word_id)).toEqual(["nov-3", "oct-28"]);
   });
 });

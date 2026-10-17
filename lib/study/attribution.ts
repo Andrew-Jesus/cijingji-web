@@ -329,6 +329,45 @@ export function remedyFor(type: ErrorType): string {
 }
 
 /**
+ * 取「最近 N 天」（含今天）的记录 —— 按**本地日界**切，不是按毫秒数刨。
+ *
+ * 为什么不用 `now - N×86400000`：那是一个滑动窗口，会在半夜切进去半截，
+ * 于是"近 7 天"到底含不含 7 天前的上午，全看你几点打开页面 ——
+ * 用户看到的总数会莫名其妙地变。按自然日切，口径是死的。
+ *
+ * 时区靠 `setHours` 走**本机时区**（`created_at` 存的是 UTC ISO 串，
+ * 拿字符串比较必然在东八区晚上 8 点后切错，见 `studyRepo.loadReviewLogsForDay`）。
+ *
+ * `days` 会被夹到 ≥1：传 0 或负数没有意义，返回"今天的"比返回空更合理。
+ * 没有 `created_at` 的记录**不进窗口** —— 不知道它发生在哪天，就不该算进"最近 7 天"。
+ */
+export function withinLocalDays<T extends { created_at?: string | null }>(
+  logs: readonly T[],
+  days: number,
+  now: Date,
+): T[] {
+  const span = Math.max(Math.floor(days), 1);
+
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (span - 1));
+
+  // 上界是"明天 0 点"（开区间）：今天全天的记录都要算进来
+  const end = new Date(now);
+  end.setHours(0, 0, 0, 0);
+  end.setDate(end.getDate() + 1);
+
+  const from = start.getTime();
+  const to = end.getTime();
+
+  return logs.filter((log) => {
+    if (!log.created_at) return false;
+    const at = new Date(log.created_at).getTime();
+    return !Number.isNaN(at) && at >= from && at < to;
+  });
+}
+
+/**
  * 从归因结果里挑出**最该先补的一类**。
  *
  * 规则：错得最多的那类；并列时不猜，返回 `null` 让界面说"两类一样多"。

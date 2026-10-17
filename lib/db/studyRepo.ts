@@ -11,6 +11,7 @@
  */
 import type { AiUsageDraft } from "@/lib/ai/contract";
 import { localDayKey } from "@/lib/plan/todayProgress";
+import { withinLocalDays } from "@/lib/study/attribution";
 import { weakWordIds, type OutcomeLog } from "@/lib/study/history";
 import type { ReviewRecord } from "@/lib/study/types";
 import { getActiveUserId } from "./identity";
@@ -129,6 +130,19 @@ export async function loadReviewLogsForDay(now: Date): Promise<ReviewLog[]> {
     const at = new Date(log.created_at);
     return !Number.isNaN(at.getTime()) && localDayKey(at) === key;
   });
+}
+
+/**
+ * 最近 N 天（含今天）的作答记录 —— 回顾页用。
+ *
+ * 和 `loadReviewLogsForDay` 一样是"全取再筛"，理由也相同：
+ * `created_at` 是 UTC ISO 串，而"最近 N 天"是本地自然日，用索引范围切一定会在时区上错。
+ * 一天最多百来条，几千条全取也就是一次内存遍历。
+ *
+ * `days` 的口径（含今天、按自然日）在 `withinLocalDays` 里，那里有单测。
+ */
+export async function loadReviewLogsInDays(days: number, now: Date): Promise<ReviewLog[]> {
+  return withinLocalDays(await ownReviewLogs(), days, now);
 }
 
 /**

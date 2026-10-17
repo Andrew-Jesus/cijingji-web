@@ -390,6 +390,24 @@ export default function HomePage() {
             </dl>
           </section>
 
+          {/* ③.5 回顾页入口（阶段 2 · B3）
+              放在方案摘要之后、说明之前：用户读完"今天怎么练"，
+              下一个自然的念头就是"那前几天我练得怎么样"。
+              做成整块可点的行，而不是又一个小文字链 —— 页头已经有两条文字链了。 */}
+          <button
+            type="button"
+            onClick={() => router.push("/review")}
+            className="border-subtle bg-surface hover:border-strong ease-soft flex w-full items-center justify-between gap-3 rounded-lg border p-5 text-left transition-colors duration-200"
+          >
+            <span className="min-w-0">
+              <span className="text-tertiary block text-[11px] tracking-[0.08em]">回头看</span>
+              <span className="text-primary mt-2 block text-sm">这几天我一直在错什么</span>
+            </span>
+            <span className="text-tertiary shrink-0">
+              <ChevronRight />
+            </span>
+          </button>
+
           {/* ④⑤ 两段说明：位置不动，但把"音量"调小 —— 不加底色、不加整圈描边，
               只靠左侧一条细线标记，字号降一级、颜色降到最安静的一档。
               内容一字未删（"数据不完美要如实说"是硬约束）。 */}
@@ -443,6 +461,27 @@ function ChevronDown() {
       aria-hidden
     >
       <path d="M3 4.5 6 7.5 9 4.5" />
+    </svg>
+  );
+}
+
+/**
+ * 朝右的细箭头 —— 与 `ChevronDown` 同一套笔画参数，只是转了方向。
+ * 仍然手画：为一个 10px 的箭头引图标库不划算（禁 emoji 是产品级约束，但这不是 emoji）。
+ */
+function ChevronRight() {
+  return (
+    <svg
+      viewBox="0 0 12 12"
+      className="h-2.5 w-2.5 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M4.5 3 7.5 6 4.5 9" />
     </svg>
   );
 }
