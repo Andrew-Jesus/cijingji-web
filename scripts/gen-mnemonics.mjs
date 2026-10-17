@@ -46,7 +46,7 @@ const ROOT = resolve(HERE, "..");
 
 /**
  * ⚠️ 与 `lib/ai/config.ts` 的 `PROVIDERS.deepseek.defaultModel` 必须一致。
- * `lib/study/mnemonicData.test.ts` 有一条断言盯着这件事，改一处漏另一处会当场红。
+ * `lib/study/mnemonic.test.ts` 里「脚本与配置不许漂移」那条盯着这件事，改一处漏另一处会当场红。
  */
 export const DEFAULT_MODEL = "deepseek-flash";
 const DEFAULT_BASE = "https://api.deepseek.com";

@@ -1,13 +1,196 @@
 {
   "meta": {
-    "generated_at": null,
-    "generator": null,
+    "generated_at": "2026-10-17T12:37:29.968Z",
+    "generator": "manual:editor",
     "prompt_version": 1,
-    "requested": 0,
-    "count": 0,
+    "requested": 30,
+    "count": 30,
     "rejected": [],
     "failed": [],
-    "uncovered_fields": ["助记质量（靠人工抽检）"]
+    "uncovered_fields": [
+      "助记质量（靠人工抽检）"
+    ]
   },
-  "items": {}
+  "items": {
+    "w:beyond": {
+      "text": "想成远处的山：山的这一边是这里，山的那一边就是更远处。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:birthmark": {
+      "text": "birth（出生）+ mark（记号）：一出生就带着的记号，就是胎记。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.956Z"
+    },
+    "w:blood": {
+      "text": "中间那两个 o 就当两滴血：b-l-oo-d，两滴连着一块儿往下掉。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:board": {
+      "text": "一块木板（board）钉在墙上，上面贴满通知 —— 就是公告牌。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:chain": {
+      "text": "想成一节扣一节的铁环：c 扣 h、a 扣 i，串起来就是链子。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:clear your throat": {
+      "text": "clear（清空）+ throat（喉咙）：把喉咙清一清，就是清清嗓子。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:double": {
+      "text": "两个 o 并排摆着，像两个 0 加起来 —— 双倍、两倍的。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:except": {
+      "text": "和 accept 只差第一个字母：a 是收下，e 是除外，别搞反。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:future": {
+      "text": "十年后的自己站在门口等你 —— 那段时间就是 future（未来）。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.959Z"
+    },
+    "w:height": {
+      "text": "eight（八）前面加个 h：八英尺那么高 —— 就是高度。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:law": {
+      "text": "念起来像「老」：老规矩一条条写在那儿，谁都不能破 —— 那便是法则。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:leadership": {
+      "text": "想成一个班正在远航，站在船头指方向的那位 —— 那份本事就是领导才能。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:lend (sb) a hand": {
+      "text": "把手 lend（借）出去：借一只手给人用，就是搭把手。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:mark": {
+      "text": "念作「马克」：马克笔在纸上划一道，留下一道痕迹。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:method": {
+      "text": "拆成 me + thod：每一步（me）都有一条道（thod）可走，那就是方法。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:mystery": {
+      "text": "拆成 my + story：我的故事还没讲完，所以还是个谜。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:narrow": {
+      "text": "中间藏着 arrow（箭）：箭杆又细又长，挤得过去的只有窄缝。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.959Z"
+    },
+    "w:north": {
+      "text": "念着像「诺斯」：听着就是个北欧名字，北欧在最北边。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:person": {
+      "text": "中间藏着 son（孩子）：再小的孩子，也是一个完整的人。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:policewoman": {
+      "text": "police（警察）后面跟着 woman（女人）：女警察。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:probably": {
+      "text": "说这个词时人常会耸耸肩：不敢打包票，只能说很可能。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:progress": {
+      "text": "每背会一个词，进度条就往前挪一格：那一点点挪动，就是进步。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:public": {
+      "text": "pub（酒馆）里说的话传得最快 —— 一转眼就成了公开的。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:reporter": {
+      "text": "report（报道）后头跟着 er（人）：负责报道的人，就是记者。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:scared": {
+      "text": "scar（伤疤）后面加 ed：身上留着伤疤的人，都是被吓过的。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:smoke": {
+      "text": "s + moke 念着像「冒咳」：烟一冒出来，人就咳。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:strength": {
+      "text": "strong（强壮）换个样子就是它：一个人最强的那一块，就是长处。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:tonight": {
+      "text": "to（到）+ night（夜）：一直到今夜，就是今晚。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:virus": {
+      "text": "开头的 v 想成一支针头：扎进去，就带进来一个病毒。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    },
+    "w:wheat": {
+      "text": "w + heat（热）：天越热长得越欢的庄稼，就是小麦。",
+      "kind": "association",
+      "generator": "manual:editor",
+      "created_at": "2026-10-17T12:37:29.960Z"
+    }
+  }
 }

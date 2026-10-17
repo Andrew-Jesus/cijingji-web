@@ -20,6 +20,7 @@ import {
 
 import { PROVIDERS } from "@/lib/ai/config";
 import { hashSeed } from "@/lib/util/random";
+import mnemonicsJson from "@/lib/db/mnemonics.json";
 import bundleJson from "@/lib/db/seed-data.json";
 import type { Sense, Unit, Word, WordPlacement } from "@/lib/db/types";
 import { associationCount, associationFor, mnemonicFor } from "@/lib/study/mnemonic";
@@ -38,15 +39,22 @@ function card(wordId: string, mode: StudyMode = "recognize"): StudyCard {
   };
 }
 
-describe("助记表为空时（当前仓库状态）", () => {
-  it("一条专属助记都没有", () => {
-    expect(associationCount()).toBe(0);
-    expect(associationFor("w:condition")).toBeNull();
+describe("没有专属助记时（回落路径）", () => {
+  /**
+   * 拿一个**确定不会入库**的 id 来测回落。
+   *
+   * 不挑真实的词（比如 `w:condition`）来测：哪天有人给那个词写了助记，
+   * 这条测试就会红 —— 而它红的原因跟回落逻辑一点关系都没有。
+   */
+  const MISSING = "w:__never_in_table__";
+
+  it("查不到就是 null，不假装有", () => {
+    expect(associationFor(MISSING)).toBeNull();
   });
 
   it("回落到通用建议，且**不留空**（空抽屉比没有抽屉更糟）", () => {
     for (const mode of ["recognize", "recall_spell"] as const) {
-      const tip = mnemonicFor(card("w:condition", mode));
+      const tip = mnemonicFor(card(MISSING, mode));
       expect(tip.kind).toBe("generic");
       expect(tip.lines.length).toBeGreaterThan(0);
       expect(tip.lines.every((l) => l.trim().length > 0)).toBe(true);
@@ -55,10 +63,89 @@ describe("助记表为空时（当前仓库状态）", () => {
   });
 
   it("两种问法给的通用建议不是同一段（写不出来 ≠ 选不出来）", () => {
-    const a = mnemonicFor(card("w:condition", "recognize"));
-    const b = mnemonicFor(card("w:condition", "recall_spell"));
+    const a = mnemonicFor(card(MISSING, "recognize"));
+    const b = mnemonicFor(card(MISSING, "recall_spell"));
     expect(a.lines).not.toEqual(b.lines);
     expect(a.title).not.toBe(b.title);
+  });
+});
+
+/**
+ * 已经入库的那批助记。
+ *
+ * 这些不是"生成一遍就完"的数据 —— 它们会被打进前端包、跟着每一次发布走。
+ * 所以这里盯的不是"有多少条"，而是"这一批不许变坏"：
+ * 混进一条假词源，整块的价值就是负的；拼错一个 word_id，那条永远不会被查到，
+ * 而且**不会报错**，只静默回落成通用建议。
+ */
+describe("已入库的助记（人工逐条写的那批）", () => {
+  interface Entry {
+    text: string;
+    kind: string;
+    generator: string;
+  }
+  const meta = (mnemonicsJson as unknown as { meta: { count: number; generator: string | null } })
+    .meta;
+  const table = (mnemonicsJson as unknown as { items: Record<string, Entry> }).items;
+  const entries = Object.entries(table);
+  const allWords = (bundleJson as unknown as { words: Word[] }).words;
+  const allPlacements = (bundleJson as unknown as { word_placements: WordPlacement[] })
+    .word_placements;
+  const allSenses = (bundleJson as unknown as { senses: Sense[] }).senses;
+  const primaryMeaning = new Map(
+    allSenses.filter((s) => s.is_primary).map((s) => [s.word_id, s.cn_meaning.trim()]),
+  );
+
+  it("确实有内容（不是空壳），且 associationCount 跟表对得上", () => {
+    expect(entries.length).toBeGreaterThan(0);
+    expect(associationCount()).toBe(entries.length);
+    expect(meta.count).toBe(entries.length);
+  });
+
+  it("★ 每条都还能过 checkMnemonic（手写更容易顺手写出词源，这道闸门必须盯着）", () => {
+    for (const [id, e] of entries) {
+      const c = checkMnemonic(e.text);
+      expect(c.ok, `${id}：${e.text}${c.ok ? "" : ` → ${c.reason}`}`).toBe(true);
+    }
+  });
+
+  it("★ 每个 word_id 都真在词库里（拼错就永远查不到，而且不报错）", () => {
+    const ids = new Set(allWords.map((w) => w.id));
+    for (const [id] of entries) expect(ids.has(id), id).toBe(true);
+  });
+
+  it("不是把释义原样抄一遍（抄释义等于没助记，界面本来就给了释义）", () => {
+    for (const [id, e] of entries) {
+      expect(e.text, id).not.toBe(primaryMeaning.get(id));
+    }
+  });
+
+  it("都能分清来源（人工写的 / 模型写的），不许空着", () => {
+    for (const [id, e] of entries) {
+      expect(e.kind, id).toBe("association");
+      expect(e.generator.trim().length, id).toBeGreaterThan(0);
+    }
+    expect(meta.generator?.trim().length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("一句话能读完：每条不超过 60 字", () => {
+    for (const [id, e] of entries) expect(e.text.length, id).toBeLessThanOrEqual(60);
+  });
+
+  it("覆盖多个单元，不是全挤在第一单元（试点要代表性）", () => {
+    const units = new Set(
+      allPlacements.filter((p) => table[p.word_id]).map((p) => p.unit_id),
+    );
+    expect(units.size).toBeGreaterThanOrEqual(10);
+  });
+
+  it("命中时走专属助记，并明说「这是联想，不是词源」", () => {
+    const [id] = entries[0] ?? [];
+    expect(id).toBeDefined();
+    const tip = mnemonicFor(card(id as string));
+    expect(tip.kind).toBe("association");
+    expect(tip.lines).toEqual([table[id as string].text]);
+    expect(tip.note).toContain("不是词源");
   });
 });
 
