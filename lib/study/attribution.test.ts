@@ -124,6 +124,55 @@ describe("aggregateErrors / 错因分布", () => {
 });
 
 describe("aggregateErrors / 脏数据", () => {
+  it("压根没带时间：算有效记录，不进 ignored", () => {
+    const logs: AttributionLog[] = [
+      { word_id: "a", is_correct: false, error_type: "spelling", latency_ms: 3000, hesitation_count: 0 },
+      { word_id: "b", is_correct: true, error_type: null, latency_ms: 2500, hesitation_count: 0 },
+    ];
+    const r = aggregateErrors(logs);
+    expect(r.total).toBe(2);
+    expect(r.wrong).toBe(1);
+    expect(r.ignored).toBe(0);
+  });
+
+  it("时间为 null：同样算有效，不当作脏数据", () => {
+    const r = aggregateErrors([
+      { word_id: "a", is_correct: false, error_type: "spelling", latency_ms: 3000, hesitation_count: 0, created_at: null },
+    ]);
+    expect(r.total).toBe(1);
+    expect(r.ignored).toBe(0);
+  });
+
+  it("没时间的词：last_wrong_at 是 null，不编成 0", () => {
+    const r = aggregateErrors([
+      { word_id: "w", is_correct: false, error_type: "spelling", latency_ms: 3000, hesitation_count: 0 },
+      { word_id: "w", is_correct: false, error_type: "spelling", latency_ms: 3000, hesitation_count: 0 },
+    ]);
+    expect(r.stubborn).toHaveLength(1);
+    expect(r.stubborn[0].last_wrong_at).toBeNull();
+  });
+
+  it("错次相同时，有时间的排在没有时间的前面", () => {
+    const logs: AttributionLog[] = [
+      { word_id: "no-time", is_correct: false, error_type: "spelling", latency_ms: 3000, hesitation_count: 0 },
+      { word_id: "no-time", is_correct: false, error_type: "spelling", latency_ms: 3000, hesitation_count: 0 },
+      log({ word_id: "timed", is_correct: false, error_type: "spelling" }),
+      log({ word_id: "timed", is_correct: false, error_type: "spelling" }),
+    ];
+    const r = aggregateErrors(logs);
+    expect(r.stubborn.map((s) => s.word_id)).toEqual(["timed", "no-time"]);
+  });
+
+  it("两个都没时间时按 word_id 兜底，不产生 NaN 比较", () => {
+    const logs: AttributionLog[] = [
+      { word_id: "z", is_correct: false, error_type: "spelling", latency_ms: 3000, hesitation_count: 0 },
+      { word_id: "z", is_correct: false, error_type: "spelling", latency_ms: 3000, hesitation_count: 0 },
+      { word_id: "a", is_correct: false, error_type: "spelling", latency_ms: 3000, hesitation_count: 0 },
+      { word_id: "a", is_correct: false, error_type: "spelling", latency_ms: 3000, hesitation_count: 0 },
+    ];
+    expect(aggregateErrors(logs).stubborn.map((s) => s.word_id)).toEqual(["a", "z"]);
+  });
+
   it("时间戳坏掉的记录跳过，并单独计数", () => {
     const logs = [
       ...correctLogs(5),

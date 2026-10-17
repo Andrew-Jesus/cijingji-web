@@ -14,8 +14,9 @@
  *      而不是把 2 道题里的 1 个错说成"你的主要问题是拼写"。
  *   ② **不猜错因**：`error_type` 是未知值时计入 `unclassified`，
  *      绝不默认当成 `meaning` —— 那会把"我们没记清"伪装成"你记混了"。
- *   ③ **脏记录单列**：时间戳坏掉的行不计入 `total`，但记在 `ignored` 里。
+ *   ③ **脏记录单列**：时间戳**给了但解析不出来**的行不计入 `total`，但记在 `ignored` 里。
  *      静默丢掉会让人以为"练了很多"，其实那些记录根本没被看见。
+ *      注意「没给时间」是另一回事 —— 那是有效记录，只是不知道几点（页内刚产生的记录就这样）。
  *
  * ── 为什么不用"正确率""掌握度"这类分数 ──────────────────────
  * 任何单一分数都要先发明阈值（80% 算好？连对 3 次算会？），
@@ -46,7 +47,13 @@ export interface AttributionLog {
   error_type: string | null;
   latency_ms: number;
   hesitation_count: number;
-  created_at: string;
+  /**
+   * 作答时刻（ISO 串）。**可以不传**：
+   * 学习页那一屏拿到的是本轮的 `ReviewRecord`，它们是几分钟内刚产生的，
+   * 记录里还没来得及带落库时间。缺时间 = 「有效，只是不知道几点」，
+   * 不是脏数据；只有**给了但解析不出来**才算脏。
+   */
+  created_at?: string | null;
 }
 
 export type AttributionConfidence = "ok" | "too_few_samples";
@@ -70,8 +77,11 @@ export interface StubbornWord {
   attempts: number;
   /** 错过的种类，按固定顺序排（`meaning` → `spelling` → `confusion`） */
   kinds: ErrorType[];
-  /** 最近一次错的时刻（毫秒）。排序用，也方便界面说「昨天还错过」 */
-  last_wrong_at: number;
+  /**
+   * 最近一次错的时刻（毫秒）。
+   * 记录里没带时间时为 `null` —— 宁可说"不知道"，也不要编一个 0 出来。
+   */
+  last_wrong_at: number | null;
 }
 
 export interface SlowWord {
@@ -104,7 +114,8 @@ export interface ErrorAttribution {
   hesitant: HesitantWord[];
   confidence: AttributionConfidence;
   /**
-   * 因时间戳坏掉而被跳过的记录数。
+   * 因**时间戳给了但解析不出来**而被跳过的记录数。
+   * 记录压根没带时间不算脏数据（见 `AttributionLog.created_at`），也不会进这个数。
    * 单独列出来是为了让"我练了 10 条怎么只显示 7 条"这件事有答案。
    */
   ignored: number;
@@ -175,12 +186,18 @@ export function aggregateErrors(
   let ignored = 0;
 
   for (const log of logs) {
-    const at = new Date(log.created_at).getTime();
-    // 时间戳坏了就跳过整条：算它"对"会虚高正确率，算它"错"会冤枉用户。
-    // 两个都不对，所以单列进 `ignored`。
-    if (Number.isNaN(at)) {
-      ignored += 1;
-      continue;
+    // 缺字段 = 有效但不知时间（见 `AttributionLog.created_at` 的说明）；
+    // 给了却解析不出来 = 脏数据，整条跳过。
+    let at: number | null = null;
+    if (log.created_at !== undefined && log.created_at !== null) {
+      const parsed = new Date(log.created_at).getTime();
+      // 时间戳坏了就跳过整条：算它"对"会虚高正确率，算它"错"会冤枉用户。
+      // 两个都不对，所以单列进 `ignored`。
+      if (Number.isNaN(parsed)) {
+        ignored += 1;
+        continue;
+      }
+      at = parsed;
     }
 
     total += 1;
@@ -208,7 +225,7 @@ export function aggregateErrors(
 
     wrong += 1;
     acc.wrong += 1;
-    if (at > acc.lastWrongAt) acc.lastWrongAt = at;
+    if (at !== null && at > acc.lastWrongAt) acc.lastWrongAt = at;
 
     if (isErrorType(log.error_type)) {
       counts[log.error_type] += 1;
@@ -238,7 +255,7 @@ export function aggregateErrors(
         attempts: acc.attempts,
         // 按固定顺序过滤，保证同一个词两次调用得到同一个数组
         kinds: ERROR_TYPES.filter((t) => acc.kinds.has(t)),
-        last_wrong_at: acc.lastWrongAt,
+        last_wrong_at: Number.isFinite(acc.lastWrongAt) ? acc.lastWrongAt : null,
       });
     }
 
@@ -255,12 +272,22 @@ export function aggregateErrors(
     }
   }
 
-  stubborn.sort(
-    (a, b) =>
-      b.wrong - a.wrong ||
-      b.last_wrong_at - a.last_wrong_at ||
-      a.word_id.localeCompare(b.word_id),
-  );
+  /**
+   * 排序规则：错次多的先看；错次相同则最近错的先看；
+   * 连时间都没有的排在有时间的后面（"知道它最近错过"比"不知道"更该先看）；
+   * 最后用 `word_id` 兜底，保证同一份输入两次调用顺序一致。
+   */
+  const recency = (w: StubbornWord): number =>
+    w.last_wrong_at === null ? Number.NEGATIVE_INFINITY : w.last_wrong_at;
+
+  stubborn.sort((a, b) => {
+    if (a.wrong !== b.wrong) return b.wrong - a.wrong;
+    const ra = recency(a);
+    const rb = recency(b);
+    // 两个都是 -Infinity 时相等，落到 word_id 兜底，不会算出 NaN
+    if (ra !== rb) return rb - ra;
+    return a.word_id.localeCompare(b.word_id);
+  });
   slowest.sort((a, b) => b.avg_latency_ms - a.avg_latency_ms || a.word_id.localeCompare(b.word_id));
   hesitant.sort(
     (a, b) => b.hesitation - a.hesitation || a.word_id.localeCompare(b.word_id),

@@ -62,6 +62,7 @@ import {
 import { GENERIC_INTEREST_TAG, interestLabel } from "@/lib/onboarding/questions";
 import { doneWordIdsToday } from "@/lib/plan/todayProgress";
 import { assembleTodayPlan, scopeLabelOf } from "@/lib/plan/todayPlan";
+import { aggregateErrors, REMEDY } from "@/lib/study/attribution";
 import { buildKnownLemmaSet, buildStudyCards } from "@/lib/study/cards";
 import { examplePacingDelayMs } from "@/lib/study/examplePacing";
 import { errorTypeLabel, gradeAnswer } from "@/lib/study/grade";
@@ -653,7 +654,7 @@ export default function StudyPage() {
   if (phase === "finished" && summary) {
     return (
       <Shell>
-        <FinishedView summary={summary} session={session} router={router} />
+        <FinishedView summary={summary} session={session} router={router} records={records} />
       </Shell>
     );
   }
@@ -1078,11 +1079,22 @@ function FinishedView({
   summary,
   session,
   router,
+  records,
 }: {
   summary: StudySummary;
   session: SessionData;
   router: ReturnType<typeof useRouter>;
+  /** 本轮每一条作答。归因只认原始记录，不认"已经算好的摘要" —— 摘要里没有错因 */
+  records: ReviewRecord[];
 }) {
+  // 纯函数、同步、几十条数据 —— 不值得上 useMemo，也不会碰网络。
+  const attribution = aggregateErrors(records);
+  // 只列真的出现过的错因，并按条数从多到少。sort 是稳定的，同分保持固定顺序。
+  const kinds = (["spelling", "meaning", "confusion"] as const)
+    .map((type) => ({ type, count: attribution.byType[type].count }))
+    .filter((row) => row.count > 0)
+    .sort((a, b) => b.count - a.count);
+
   return (
     <div data-animated className="flex flex-col gap-3">
       <header>
@@ -1103,6 +1115,51 @@ function FinishedView({
         <p className="text-secondary border-strong mt-5 border-t pt-4 text-xs leading-relaxed">
           一共作答 {summary.attempts} 次（同一个词再练一遍也算一次）—— 这就是为什么它比词的个数多。
         </p>
+      </section>
+
+      {/* 这次错在哪：从本轮作答里**数**出来的（纯函数），不调 AI、不猜 */}
+      <section className="border-subtle bg-surface rounded-lg border p-5">
+        <p className="text-tertiary text-[11px] tracking-[0.08em]">这次错在哪</p>
+        {attribution.confidence === "too_few_samples" ? (
+          <>
+            <p className="text-primary mt-3 text-sm leading-relaxed">
+              这次只做了 {attribution.total} 道，还看不出规律。
+            </p>
+            <p className="text-secondary mt-2 text-xs leading-relaxed">
+              样本太少时下结论等于瞎猜 —— 多练几次再来看这一块。
+            </p>
+          </>
+        ) : attribution.wrong === 0 ? (
+          <p className="text-primary mt-3 text-sm leading-relaxed">
+            这次一个都没错，没有可归因的错题。
+          </p>
+        ) : (
+          <>
+            <p className="text-primary mt-3 text-sm leading-relaxed">
+              一共 {attribution.total} 次作答，{attribution.wrong} 次没答对。
+            </p>
+            {/* 每条错因后面直接跟一个具体动作 —— 只说「你拼写错了」等于没帮忙 */}
+            <ul className="divide-subtle mt-3 divide-y">
+              {kinds.map((row) => (
+                <li key={row.type} className="py-2.5">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-primary text-sm">{errorTypeLabel(row.type)}</span>
+                    <span className="text-tertiary shrink-0 text-[11px] tabular-nums">
+                      {row.count} 个
+                    </span>
+                  </div>
+                  <p className="text-secondary mt-1 text-xs leading-relaxed">{REMEDY[row.type]}</p>
+                </li>
+              ))}
+            </ul>
+            <p className="text-tertiary mt-3 text-[11px] leading-relaxed">
+              这是从你这次的 {attribution.total} 次作答里数出来的，不是猜的。
+              {attribution.unclassified > 0
+                ? ` 另有 ${attribution.unclassified} 个错没记清原因，没有算进上面。`
+                : ""}
+            </p>
+          </>
+        )}
       </section>
 
       {/* 卡住的词：这才是明天真正要处理的东西 */}
