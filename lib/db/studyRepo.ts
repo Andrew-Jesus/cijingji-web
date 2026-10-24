@@ -12,12 +12,22 @@
 import type { AiUsageDraft } from "@/lib/ai/contract";
 import { localDayKey } from "@/lib/plan/todayProgress";
 import { withinLocalDays } from "@/lib/study/attribution";
+import { fsrsScheduler } from "@/lib/study/fsrs";
 import { weakWordIds, type OutcomeLog } from "@/lib/study/history";
+import { gradeFor, replayWordMemory, type MemorySlice } from "@/lib/study/replay";
 import type { ReviewRecord } from "@/lib/study/types";
 import { getActiveUserId } from "./identity";
-import { exampleIdFor, planIdFor } from "./ids";
+import { exampleIdFor, memoryIdFor, planIdFor } from "./ids";
 import { db } from "./local";
-import type { AiUsage, DailyPlan, DailyPlanItem, PlanStatus, ReviewLog, UserExample } from "./types";
+import type {
+  AiUsage,
+  DailyPlan,
+  DailyPlanItem,
+  PlanStatus,
+  ReviewLog,
+  UserExample,
+  WordMemory,
+} from "./types";
 
 // 编号规则住在 `./ids.ts`（升级事务也要用同一份，放这里会跟 local.ts 绕成环）。
 // 从这里转出去，调用方 import 哪个都行。
@@ -152,10 +162,10 @@ export async function loadReviewLogsInDays(days: number, now: Date): Promise<Rev
  * 这四个字段是整张表的价值所在 —— 只记对错的话，这张表就只是一堆 0/1，
  * 做不了错因归因，也解释不了"为什么今天答得慢"。
  */
-export async function appendReviewLog(record: ReviewRecord, now: Date): Promise<void> {
-  const row: ReviewLog = {
+function buildReviewRow(record: ReviewRecord, now: Date, userId: string): ReviewLog {
+  return {
     id: localId("rl", now),
-    user_id: getActiveUserId(),
+    user_id: userId,
     word_id: record.word_id,
     session_id: record.session_id,
     mode: record.mode,
@@ -166,7 +176,110 @@ export async function appendReviewLog(record: ReviewRecord, now: Date): Promise<
     rating: record.rating,
     created_at: now.toISOString(),
   };
-  await db.review_logs.put(row);
+}
+
+export async function appendReviewLog(record: ReviewRecord, now: Date): Promise<void> {
+  await db.review_logs.put(buildReviewRow(record, now, getActiveUserId()));
+}
+
+/**
+ * ★ 作答之后：**记流水 + 更新记忆状态，一个事务里做完。**
+ *
+ * ── 为什么必须原子 ──────────────────────────────────────────────
+ * 记忆状态是流水的派生值（见 `types.ts` 里 `WordMemory`）。两者在同一个库里，
+ * 分开写就会出现"流水有、状态没有"的中间态：
+ *   · 该词在状态表里查不到 → 排课时被当成**生词**，明明练过却按新词给；
+ *   · 而且这个缺口**永远补不上**（懒回填只补"完全没有记录"的词？不，它补所有缺口，
+ *     见 `loadWordMemories`），但如果不补，错误会一直累积。
+ * 所以放一个事务：要么两条都成，要么都不成。失败时调用方照旧提示"这条没记下来"，
+ * 那句话在两种情况下都是实话。
+ *
+ * ── 为什么事务里只有 Dexie 的 await ────────────────────────────
+ * Dexie 的事务靠"同一段微任务链"维持，中间插一个**外部**的 await
+ * （网络、`setTimeout`、别人的 promise）事务就会提前提交，后面的写入跑到事务外。
+ * 这里调用的 `fsrsScheduler.next` 是**同步纯函数**、`getActiveUserId` 是同步的，
+ * 所以事务体里只可能 await Dexie 自己 —— 这一条不能破。
+ */
+export async function recordAnswer(record: ReviewRecord, now: Date): Promise<void> {
+  const userId = getActiveUserId();
+  const row = buildReviewRow(record, now, userId);
+  const at = now.toISOString();
+
+  await db.transaction("rw", db.review_logs, db.word_states, async () => {
+    const id = memoryIdFor(record.word_id, userId);
+    const prev = await db.word_states.get(id);
+
+    // 老用户第一次走到这里时状态表是空的 —— 从"新卡"起步，但用的是
+    // 这次作答的时间，所以不会算错间隔（缺的是更早的历史，而不是这一次）
+    const before: MemorySlice = prev ?? fsrsScheduler.initial(now);
+    const after = fsrsScheduler.next(before, gradeFor(record), now);
+
+    await db.review_logs.put(row);
+    await db.word_states.put({
+      id,
+      user_id: userId,
+      word_id: record.word_id,
+      ...after,
+      updated_at: at,
+    });
+  });
+}
+
+// ------------------------------------------------------------------ 记忆状态（FSRS）
+
+/**
+ * 读出当前用户**所有**词的记忆状态。
+ *
+ * ── 它会**顺手自愈**（这一点看着多余，其实是必要的）──────────────
+ * 状态表是派生值，随时可能缺行：老用户升级上来表是空的、某次写入被系统打断了、
+ * 用户清了缓存只从云端同步回了流水。所以这里不只"读"，还会：
+ *   **发现有作答记录、却没有状态行的词 → 当场从流水重放补齐，再返回。**
+ *
+ * 为什么不做成"表空就整体重放"：那样只能治"完全空"，治不了"缺一个"。
+ * 而"缺一个"恰恰是最隐蔽的 —— 那一个词会被反复当成生词推给用户，
+ * 用户的感觉是"这词我明明练过好几遍，它怎么还给我"，而日志里一切正常。
+ *
+ * 代价是每次都要把流水读一遍（单用户、几千条，几毫秒）。这个代价换的是
+ * **"状态表永远可以说扔就扔"** —— 那是整个架构的立足点，不能为几毫秒放弃。
+ */
+export async function loadWordMemories(): Promise<WordMemory[]> {
+  const userId = getActiveUserId();
+  const rows = (await db.word_states.toArray()).filter((row) => row.user_id === userId);
+  const logs = await ownReviewLogs();
+  if (logs.length === 0) return rows;
+
+  const have = new Set(rows.map((row) => row.word_id));
+  const missing = logs.some((log) => !have.has(log.word_id));
+  if (!missing) return rows;
+
+  const replayed = replayWordMemory({
+    logs: logs.map((log) => ({
+      id: log.id,
+      word_id: log.word_id,
+      is_correct: log.is_correct,
+      rating: log.rating,
+      created_at: log.created_at,
+    })),
+    scheduler: fsrsScheduler,
+    userId,
+  }).filter((m) => !have.has(m.word_id));
+
+  if (replayed.length === 0) return rows;
+  await db.word_states.bulkPut(replayed);
+  return [...rows, ...replayed];
+}
+
+/**
+ * 给排课用的形状：`word_id → 状态`。
+ *
+ * 单独一个函数而不是让调用方自己 `new Map(...)`：`buildDailyPlan` 的 `clock.memory`
+ * 就是这个类型，两处各写一遍 `new Map(rows.map(...))` 迟早写成取 `id` 不取 `word_id`
+ * （`id` 是 `st:<user>:<word>`，当 key 用会**一个都命中不了**，排课退化成全生词，
+ * 且不报错）。
+ */
+export async function loadMemoryMap(): Promise<Map<string, WordMemory>> {
+  const rows = await loadWordMemories();
+  return new Map(rows.map((row) => [row.word_id, row]));
 }
 
 /** 还没稳住的词（最近错的排前面）→ 直接喂给 `buildDailyPlan` */

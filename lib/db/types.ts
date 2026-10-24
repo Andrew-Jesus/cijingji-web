@@ -219,6 +219,61 @@ export interface UserExample {
   is_ai_generated: boolean;
 }
 
+/**
+ * 一个词的**记忆状态**（FSRS 排期状态）—— 用户层，但**不参与云同步**。
+ *
+ * ── 为什么不上云（这是个刻意的架构决定，别改成同步）────────────
+ * 它是 `review_logs` 的**派生值**，不是原始事实：
+ *   FSRS 状态 = 把某个词的全部作答记录按时间顺序重放一遍得到的结果。
+ * 既然是派生值，就没有"两台设备谁的状态对"这个问题 —— 拿流水重放一遍就有答案。
+ *
+ * 反过来，如果它也上云，会立刻出现一个**没有正确答案**的冲突：
+ *   手机和电脑各自练了同一个词，各自推进了 FSRS 状态。
+ *   合并时该取谁的？按时间新的？那另一次的作答就等于白练（FSRS 需要连续的历史）。
+ *   按 stability 大的？那是**篡改算法输入**，会得到一个算法从没算过的卡片。
+ * 所以：**真相源只有 `review_logs` 一个，状态表是本机的缓存，可以随时丢弃重建。**
+ *
+ * 代价是换设备后要重放一遍流水（几千条、几十毫秒），换来的是永远不会出现
+ * "状态和流水对不上"这种无解的数据问题。
+ *
+ * ── 为什么字段名是 snake_case 且不用 ts-fsrs 的类型 ─────────────
+ * ① 与全库其它表一致（将来真要同步，字段名不用改）；
+ * ② 数据层不依赖算法库 —— 换调度算法（FSRS-5 → FSRS-6）只改 `lib/study/fsrs.ts` 的映射，
+ *    表结构与这里一行不用动。
+ *
+ * ── 日期一律存 ISO 字符串（UTC，定长 24 字符）─────────────────
+ * 定长的 ISO 串**字典序等于时间序**，所以 Dexie 可以直接用字符串索引按 `due` 排序。
+ * 存 `number` 也行，但存字符串在数据库里能直接看懂是哪天。
+ * ⚠️ 必须统一用 `toISOString()`；混进一个本地时区的串（如 `2026-10-24 22:00`）
+ * 排序就会错，而且**不会报错**。
+ */
+export type MemoryState = "new" | "learning" | "review" | "relearning";
+
+export interface WordMemory {
+  /** `st:<user_id>:<word_id>` —— 带主人，见 `lib/db/ids.ts` */
+  id: string;
+  user_id: string;
+  word_id: string;
+  /** 下次该复习的时间。`due <= now` 就是"到期了" */
+  due: string;
+  /** 记忆稳定度（天）。越大 = 忘得越慢 */
+  stability: number;
+  /** 这个词对这个人有多难（约 1~10）。**每个词各自算，不是全局值** */
+  difficulty: number;
+  /** 上一次复习时距再上一次的天数（FSRS 的输入之一） */
+  elapsed_days: number;
+  /** 上一次给出的间隔（天） */
+  scheduled_days: number;
+  reps: number;
+  lapses: number;
+  state: MemoryState;
+  /** 第一次学习时为空 */
+  last_review: string | null;
+  /** 学习步骤走到第几步。FSRS 的 learning / relearning 阶段要用 */
+  learning_steps: number;
+  updated_at: string;
+}
+
 export interface AiUsage {
   id: string;
   user_id: string | null;

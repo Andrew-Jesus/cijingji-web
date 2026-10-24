@@ -40,7 +40,13 @@ import { pushNotice, setTodayProgress } from "@/lib/console/store";
 import { db } from "@/lib/db/local";
 import { getProfile, isOnboarded } from "@/lib/db/repo";
 import { DATA_HONEST_NOTE, ensureSeeded } from "@/lib/db/seed";
-import { deriveWeakWordIds, loadReviewLogs, saveDailyPlan, todayKey } from "@/lib/db/studyRepo";
+import {
+  deriveWeakWordIds,
+  loadMemoryMap,
+  loadReviewLogs,
+  saveDailyPlan,
+  todayKey,
+} from "@/lib/db/studyRepo";
 import { findGoal, interestLabel, isGoalSupported } from "@/lib/onboarding/questions";
 import { countDoneInPlan } from "@/lib/plan/todayProgress";
 import { assembleTodayPlan } from "@/lib/plan/todayPlan";
@@ -111,7 +117,10 @@ export default function HomePage() {
         }
 
         await ensureSeeded(db);
-        const [units, words, senses, placements, volumes, curricula, goalProfiles, reviewLogs] =
+        // 判定时刻只取一次，往下全用它 —— 排课、今日进度、日期标签必须是同一个"现在"。
+        // 取两次的后果：跨零点那一秒里，排课按今天算、进度按昨天算。
+        const now = new Date();
+        const [units, words, senses, placements, volumes, curricula, goalProfiles, reviewLogs, memory] =
           await Promise.all([
             db.units.toArray(),
             db.words.toArray(),
@@ -125,6 +134,9 @@ export default function HomePage() {
             // 走仓库层，不直接读表 —— 它只返回**属于当前用户**的作答记录。
             // 直接读全表会让"今日已练"把上一个人在这台设备上留下的记录也算进来。
             loadReviewLogs(),
+            // 每个词的记忆状态。**读不出状态就等于"没有复习"这件事**，
+            // 所以这一项不能省 —— 老用户第一次跑时会在这里自愈回填（见 loadWordMemories）。
+            loadMemoryMap(),
           ]);
         const snapshot = { units, words, senses, placements };
 
@@ -160,6 +172,9 @@ export default function HomePage() {
           dailyMinutes: profile.daily_minutes,
           weakWordIds,
           scope,
+          // 传了 clock 才走"到期优先"。不传就是老排法 —— 那是给测试和
+          // "状态读不出来"的降级场景留的路，页面这里必须传。
+          clock: { memory, now },
         });
         if (!assembled.ok) throw new Error(`[${assembled.code}] ${assembled.message}`);
 
@@ -189,7 +204,6 @@ export default function HomePage() {
 
         const plan = assembled.plan;
         const goalOption = findGoal(profile.goal);
-        const now = new Date();
         const sessionId = todayKey(now);
         const planWordIds = plan.items.map((i) => i.word_id);
 

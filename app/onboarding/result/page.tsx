@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import { pushNotice, requestQuiet } from "@/lib/console/store";
 import { db } from "@/lib/db/local";
 import { getProfile } from "@/lib/db/repo";
+import { loadMemoryMap } from "@/lib/db/studyRepo";
 import { DATA_HONEST_NOTE, ensureSeeded } from "@/lib/db/seed";
 import { readAttempt } from "@/lib/onboarding/attempt";
 import {
@@ -97,12 +98,16 @@ export default function ResultPage() {
         }
 
         await ensureSeeded(db);
-        const [units, words, senses, placements, goalProfiles] = await Promise.all([
+        const now = new Date();
+        const [units, words, senses, placements, goalProfiles, memory] = await Promise.all([
           db.units.toArray(),
           db.words.toArray(),
           db.senses.toArray(),
           db.word_placements.toArray(),
           db.goal_profiles.toArray(),
+          // 第一次引导时它是空表（没有任何作答），排课会走"第一天给满额度"那条分支；
+          // 老用户重看这一页时它就是真实状态 —— 两种情况都如实反映，不假装他是新人。
+          loadMemoryMap(),
         ]);
         const snapshot = { units, words, senses, placements };
 
@@ -119,6 +124,7 @@ export default function ResultPage() {
           goalProfile,
           dailyMinutes: profile.daily_minutes,
           weakWordIds: [],
+          clock: { memory, now },
         });
         if (!assembled.ok) throw new Error(`[${assembled.code}] ${assembled.message}`);
         const plan = assembled.plan;

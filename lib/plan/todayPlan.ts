@@ -21,7 +21,7 @@ import type { GoalProfile } from "@/lib/db/types";
 import { mergeProfile, type MergedProfile } from "@/lib/profile/mergeProfile";
 import { LIMITS, defaultScope, validateScope, type ScopeJson } from "@/lib/scope/schema";
 import { resolveScope, type WordSnapshot } from "@/lib/scope/resolveScope";
-import { buildDailyPlan, chooseMode, type BuildPlanOutput } from "./buildDailyPlan";
+import { buildDailyPlan, chooseMode, type BuildPlanOutput, type PlanClock } from "./buildDailyPlan";
 import { dailyCapFor } from "./estimate";
 
 /** 范围没有 label 时的兜底叫法。**唯一一处** —— 三个页面共用同一个词 */
@@ -41,6 +41,11 @@ export interface AssemblePlanInput {
   weakWordIds?: readonly string[];
   /** 不传则用阶段 0 默认范围（八上 Unit 1） */
   scope?: ScopeJson;
+  /**
+   * 记忆状态 + 判定时刻。不传 = 走阶段 0 的老排法（错词优先）。
+   * 页面读得到状态就一定传，否则"到期没复习"这件事在产品里不存在。
+   */
+  clock?: PlanClock;
 }
 
 export type AssemblePlanResult =
@@ -90,6 +95,7 @@ export function assembleTodayPlan(input: AssemblePlanInput): AssemblePlanResult 
     weak_word_ids: [...(input.weakWordIds ?? [])],
     daily_cap: dailyCap,
     pace: merged.pace,
+    clock: input.clock,
   });
 
   return {

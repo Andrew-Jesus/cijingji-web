@@ -20,6 +20,7 @@ import type {
   UserExample,
   Volume,
   Word,
+  WordMemory,
   WordPlacement,
 } from "./types";
 
@@ -50,6 +51,14 @@ const STORES = {
   // 云端那条约束本来就是 `unique (user_id, word_id, interest_tag)`，两边口径要一致。
   user_examples: "id, &[user_id+word_id+interest_tag], word_id",
   ai_usage: "id, [user_id+created_at], created_at, task",
+  /**
+   * 记忆状态（FSRS）。**本机缓存，不上云**（理由见 types.ts 里 `WordMemory` 的注释）。
+   *
+   * `[user_id+due]` 这条复合索引是给"今天哪些词到期"用的 —— 排计划时按 `due` 升序取，
+   * 逾期最久的排最前面。`due` 存的是定长 UTC ISO 串，字典序等于时间序，
+   * 所以字符串索引可以直接当时间索引用。
+   */
+  word_states: "id, user_id, &[user_id+word_id], [user_id+due]",
 } as const;
 
 export class CijingjiDB extends Dexie {
@@ -68,6 +77,8 @@ export class CijingjiDB extends Dexie {
   review_logs!: Table<ReviewLog, string>;
   user_examples!: Table<UserExample, string>;
   ai_usage!: Table<AiUsage, string>;
+  /** FSRS 记忆状态。本机缓存 —— 可从 `review_logs` 重放重建，见 types.ts */
+  word_states!: Table<WordMemory, string>;
 
   constructor() {
     super("cijingji");
@@ -130,6 +141,28 @@ export class CijingjiDB extends Dexie {
           exampleIdFor(String(row.word_id), String(row.interest_tag), String(row.user_id)),
         );
       });
+
+    /**
+     * ── v4：新增 `word_states`（FSRS 记忆状态）──────────────────────
+     *
+     * **只建表，不在这里回填。**
+     *
+     * 回填的意思是"把已有用户的作答流水重放一遍，补出每个词的记忆状态"。
+     * 它不做的话，老用户升级后所有词都会被当成"从没学过"——
+     * 首页会把学过的词当新词再推一遍，用户会以为进度清零了。所以**必须补**。
+     *
+     * 但补的动作不放在这里，理由两条：
+     *   ① 重放要 import 调度算法。放进升级事务等于让"打开数据库"这件事
+     *      依赖整个算法库，库一报错连库都打不开（升级事务失败会**整体回滚**，
+     *      Dexie 随后会一直卡在这个版本上）。
+     *   ② 升级事务里做几千次同步计算会阻塞首屏。
+     *
+     * 所以改成**懒回填**：第一次读状态时，发现"表里没这个人的行、但流水里有他的记录"
+     * 就现场重放一遍（见 `studyRepo.loadWordStates`）。新老用户走同一段代码，
+     * 不需要记"这台机器升级过没有"这种额外状态（多一个要持久化的标志
+     * 就多一处会不同步的地方）。
+     */
+    this.version(4).stores(STORES);
   }
 }
 

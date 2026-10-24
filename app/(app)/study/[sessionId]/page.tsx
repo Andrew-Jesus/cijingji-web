@@ -48,12 +48,13 @@ import { db } from "@/lib/db/local";
 import { getProfile, isOnboarded } from "@/lib/db/repo";
 import { DATA_HONEST_NOTE, ensureSeeded } from "@/lib/db/seed";
 import {
-  appendReviewLog,
   deriveWeakWordIds,
   findCachedExample,
   loadDailyPlan,
+  loadMemoryMap,
   loadReviewLogsForDay,
   recordAiUsage,
+  recordAnswer,
   saveDailyPlan,
   saveExample,
   setPlanStatus,
@@ -233,11 +234,13 @@ export default function StudyPage() {
         if (!goalProfile) throw new Error("本地库缺少 goal_profiles（中考）配置");
 
         const weak = await deriveWeakWordIds();
+        const memory = await loadMemoryMap();
         const assembled = assembleTodayPlan({
           snapshot,
           goalProfile,
           dailyMinutes: profile.daily_minutes,
           weakWordIds: weak,
+          clock: { memory, now },
         });
         if (!assembled.ok) throw new Error(`[${assembled.code}] ${assembled.message}`);
 
@@ -554,8 +557,12 @@ export default function StudyPage() {
 
     // 先落库再前进：宁可"记录多了一条、卡片没走"，也不要反过来的那种丢数据。
     // 写失败也让用户继续走 —— 卡住他比丢一条记录更糟。
+    //
+    // 一次事务里同时写"作答流水"和"这个词的记忆状态"：
+    // 流水是真相、状态是它的派生值，两者中间不允许出现"有流水无状态"的缝
+    // （那条缝的表现是"这词我明明练过，怎么又按生词推给我"，而且不报错）。
     try {
-      await appendReviewLog(record, now);
+      await recordAnswer(record, now);
     } catch {
       pushNotice({
         key: "review-log",

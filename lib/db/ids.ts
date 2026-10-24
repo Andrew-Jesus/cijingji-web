@@ -43,3 +43,16 @@ export function planIdFor(planDate: string, userId: string): string {
 export function exampleIdFor(wordId: string, interestTag: string, userId: string): string {
   return `ex:${userId}:${wordId}:${interestTag}`;
 }
+
+/**
+ * 记忆状态编号：一个人 + 一个词 = 一条。
+ *
+ * 带主人是必须的：同一台设备两个人登录时，"同一个词的 FSRS 状态"是两份完全不同的东西
+ * （A 学得很牢、B 刚接触）。不带主人就会互相覆盖，症状是"我明明练熟了，
+ * 第二天它又按生词出现"——不报错，只是算法被别人的数据污染了。
+ *
+ * 表上还有 `[user_id+word_id]` 唯一索引兜底，两处口径保持一致。
+ */
+export function memoryIdFor(wordId: string, userId: string): string {
+  return `st:${userId}:${wordId}`;
+}

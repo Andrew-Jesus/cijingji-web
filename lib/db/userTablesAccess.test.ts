@@ -1,5 +1,5 @@
 /**
- * 门禁：**用户层五张表只准由 `lib/db` 与 `lib/sync` 里的代码直接碰**。
+ * 门禁：**用户层六张表只准由 `lib/db` 与 `lib/sync` 里的代码直接碰**。
  *
  * ── 为什么值得为它单独写一条测试（不是形式主义）──────────────
  * 这条规矩原本只写在 `studyRepo.ts` 的文件头注释里（"页面与纯函数只认这个接口"）。
@@ -29,8 +29,19 @@ const EXEMPT = ["lib/db", "lib/sync"];
 /**
  * 用户层表名。**内容层不算** —— 那些是所有人共用的只读词库，
  * 谁读、读多少都不涉及"这是谁的数据"。
+ *
+ * `word_states`（FSRS 记忆状态）也在这里：它虽然是本机缓存、不上云，
+ * 但**每个人各有一份**（同一个词对不同人难度完全不同）。页面绕过仓库层直接读它，
+ * 就会读到别的账号的状态 —— 症状是"我明明练熟了它又按生词出现"，且不报错。
  */
-const USER_TABLES = ["profiles", "daily_plans", "review_logs", "user_examples", "ai_usage"];
+const USER_TABLES = [
+  "profiles",
+  "daily_plans",
+  "review_logs",
+  "user_examples",
+  "ai_usage",
+  "word_states",
+];
 
 const PATTERN = new RegExp(`db\\.(${USER_TABLES.join("|")})\\b`);
 
