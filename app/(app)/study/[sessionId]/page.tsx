@@ -63,6 +63,7 @@ import {
 import { GENERIC_INTEREST_TAG, interestLabel } from "@/lib/onboarding/questions";
 import { doneWordIdsToday } from "@/lib/plan/todayProgress";
 import { assembleTodayPlan, scopeLabelOf } from "@/lib/plan/todayPlan";
+import { resolveBudgetMinutes } from "@/lib/plan/timeBudgetStore";
 import { aggregateErrors, REMEDY } from "@/lib/study/attribution";
 import { buildKnownLemmaSet, buildStudyCards } from "@/lib/study/cards";
 import { examplePacingDelayMs } from "@/lib/study/examplePacing";
@@ -235,10 +236,12 @@ export default function StudyPage() {
 
         const weak = await deriveWeakWordIds();
         const memory = await loadMemoryMap();
+        // 兜底排一份（只在"今天还没存过任务单"时用到，例如直接从收藏夹进来）。
+        // 时长必须和首页同一个口径 —— 否则 22 点从首页进是 3 分钟、从这里进是 10 分钟。
         const assembled = assembleTodayPlan({
           snapshot,
           goalProfile,
-          dailyMinutes: profile.daily_minutes,
+          dailyMinutes: resolveBudgetMinutes(profile.daily_minutes),
           weakWordIds: weak,
           clock: { memory, now },
         });
@@ -1215,9 +1218,8 @@ function FinishedView({
         <p className="text-primary text-xs font-medium">必须让你知道的两件事</p>
         <p className="text-secondary mt-2 text-xs leading-relaxed">{DATA_HONEST_NOTE}</p>
         <p className="text-secondary mt-2 text-xs leading-relaxed">
-          另外：复习间隔还没接（科学复习调度排在阶段 2）。现在「明天还会出现」是按
-          <span className="font-medium">「今天最后一次没答对」</span>
-          推的 —— 顺序是稳的、可解释的，但不是最科学的那种。
+          另外：复习间隔按 FSRS 排 —— 答对的词间隔会拉长，答错的会很快回来。
+          参数是通用默认值，还没按你个人的记忆调过，所以它是「合理」而不是「为你想过」。
         </p>
       </section>
 

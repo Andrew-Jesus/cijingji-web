@@ -31,7 +31,7 @@
  *   卡片内分隔线以外的任何装饰线。
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 import { SignOutLink } from "@/components/auth/SignOutLink";
@@ -50,13 +50,27 @@ import {
 import { findGoal, interestLabel, isGoalSupported } from "@/lib/onboarding/questions";
 import { countDoneInPlan } from "@/lib/plan/todayProgress";
 import { assembleTodayPlan } from "@/lib/plan/todayPlan";
+import {
+  BUDGET_TIER_MINUTES,
+  CUSTOM_MINUTE_MAX,
+  CUSTOM_MINUTE_MIN,
+  clampMinutes,
+  isTierMinutes,
+} from "@/lib/plan/timeBudget";
+import { resolveBudgetMinutes, writeBudgetMinutes } from "@/lib/plan/timeBudgetStore";
 import { resolveScope } from "@/lib/scope/resolveScope";
-import { defaultScope, scopeForUnit, unitDisplayLabel } from "@/lib/scope/schema";
+import { LIMITS, defaultScope, scopeForUnit, unitDisplayLabel } from "@/lib/scope/schema";
 import { selectUnit, useSelectedUnitId } from "@/lib/scope/selection";
 
 interface HomeData {
   perDay: number;
   perDayMinutes: number;
+  /**
+   * 这次选了多少分钟。**不是** `dailyMinutes`（画像里"每天多少分钟"）——
+   * 后者是"我的日常节奏"，进库上云；这个是"这一次我有多少时间"，只在本机。
+   * 两个都在页面上，但语义不同，别合并。
+   */
+  budgetMinutes: number;
   /** 今天已经练过多少个不同的词。B3 有学习页之前它恒为 0，但通路是通的 */
   doneToday: number;
   brief: string;
@@ -101,6 +115,22 @@ export default function HomePage() {
    */
   const selectedUnitId = useSelectedUnitId();
   const [pickerOpen, setPickerOpen] = useState(false);
+  /**
+   * 这次选了多少分钟。`null` = 还没选过 → 走 `resolveBudgetMinutes`（上次的 / 时段推断）。
+   *
+   * 为什么放在 state 而不是直接读 localStorage：它一变，下面那个 effect 就重跑 ——
+   * 「改时长」不需要另写一套重排逻辑，把同一条流水线对着新预算再跑一遍就是全部。
+   * 落盘交给 `writeBudgetMinutes`，本机记住下次用。
+   */
+  const [budget, setBudget] = useState<number | null>(null);
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customDraft, setCustomDraft] = useState("");
+  /**
+   * 小词那条通知只在"换单元 / 换天"时播一次。
+   * 不加这一层，用户来回点四个挡位就会看到四条一模一样的通知 —— 刷屏比不播更糟。
+   */
+  const announcedRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -164,12 +194,16 @@ export default function HomePage() {
         // 这是阶段 0 里"复习"这件事的**全部**实现（真正的间隔调度归阶段 2 的 FSRS）。
         const weakWordIds = await deriveWeakWordIds();
 
+        // 「这次有多少时间」：用户点了挡位就用他的选择，否则按上次的 / 时段推断。
+        // 注意它只是**换了个每日词量的分母**，排课规则（到期优先、新词上限）一点没变。
+        const budgetMinutes = budget ?? resolveBudgetMinutes(profile.daily_minutes);
+
         // 装配口径收在 assembleTodayPlan 一处：首页 / 结果页 / 学习页跑的是同一条流水线，
         // 所以"每天几个词"这三个地方永远说得一样。
         const assembled = assembleTodayPlan({
           snapshot,
           goalProfile,
-          dailyMinutes: profile.daily_minutes,
+          dailyMinutes: budgetMinutes,
           weakWordIds,
           scope,
           // 传了 clock 才走"到期优先"。不传就是老排法 —— 那是给测试和
@@ -223,17 +257,22 @@ export default function HomePage() {
         const doneToday = countDoneInPlan(reviewLogs, planWordIds, now);
 
         if (cancelled) return;
-        // 排好了就往小词报一声 —— 用户不会盯着加载过程，但翻小词时能看见
-        pushNotice({
-          key: "daily-plan",
-          level: "info",
-          title: "今日任务单已排好",
-          detail:
-            `${plan.items.length} 个词 · 约 ${plan.estimated_minutes} 分钟 · 起点 ${assembled.scopeLabel}` +
-            // 错词有没有参与排计划是用户看得见的差异（"今天怎么有几个眼熟的词"）——
-            // 说一句比不说好，不说他会以为这几个词是随机冒出来的
-            (plan.breakdown.weak > 0 ? ` · 其中 ${plan.breakdown.weak} 个是之前错过的` : ""),
-        });
+        // 排好了就往小词报一声 —— 用户不会盯着加载过程，但翻小词时能看见。
+        // 只在"换单元 / 换天"时播：改时长也会重跑这个 effect，不加判断会连着刷屏。
+        const noticeSig = `${currentUnit.id}|${sessionId}`;
+        if (announcedRef.current !== noticeSig) {
+          announcedRef.current = noticeSig;
+          pushNotice({
+            key: "daily-plan",
+            level: "info",
+            title: "今日任务单已排好",
+            detail:
+              `${plan.items.length} 个词 · 约 ${plan.estimated_minutes} 分钟 · 起点 ${assembled.scopeLabel}` +
+              // 错词有没有参与排计划是用户看得见的差异（"今天怎么有几个眼熟的词"）——
+              // 说一句比不说好，不说他会以为这几个词是随机冒出来的
+              (plan.breakdown.weak > 0 ? ` · 其中 ${plan.breakdown.weak} 个是之前错过的` : ""),
+          });
+        }
         // 小词外圈那道进度环读的就是这个数。由首页写入而不是小词自己去算 ——
         // 排计划要跑一整套 resolveScope，为了一个环再跑一遍纯属浪费。
         setTodayProgress(doneToday, plan.items.length, sessionId);
@@ -242,6 +281,7 @@ export default function HomePage() {
           data: {
             perDay: plan.items.length,
             perDayMinutes: plan.estimated_minutes,
+            budgetMinutes,
             doneToday,
             brief: plan.brief,
             summary: goalProfile.user_facing_summary,
@@ -281,7 +321,43 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [router, selectedUnitId]);
+  }, [router, selectedUnitId, budget]);
+
+  /** 选定一个挡位：立即重排 + 本机记住。不弹窗、不跳页、不等确认 */
+  function pickBudget(minutes: number) {
+    const next = clampMinutes(minutes);
+    setBudget(next);
+    writeBudgetMinutes(next);
+    setBudgetOpen(false);
+    setCustomOpen(false);
+  }
+
+  /** 自定义时长。空输入不当作 0 —— `Number("") === 0`，会把它夹成 1 分钟 */
+  function applyCustom() {
+    const raw = customDraft.trim();
+    if (raw === "") return;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;
+    pickBudget(n);
+    setCustomDraft("");
+  }
+
+  /** 打开自定义面板时把当前分钟数填进去 —— 让用户"改一个数"，而不是"从空框开始写" */
+  function toggleCustom() {
+    if (customOpen) {
+      setCustomOpen(false);
+      return;
+    }
+    setCustomDraft(state.status === "ready" ? String(state.data.budgetMinutes) : "");
+    setCustomOpen(true);
+  }
+
+  /**
+   * 「自定义」这一格什么时候算选中：面板开着，或者当前分钟数本来就不在四个预设里。
+   * 少了后半句，选了 15 分钟之后五格全不亮 —— 用户看不出自己选的是哪个。
+   */
+  const customActive =
+    state.status === "ready" && (customOpen || !isTierMinutes(state.data.budgetMinutes));
 
   return (
     // pb-20 而不是 pb-12：左下角常驻着小词（44px 高 + 20px 边距），
@@ -327,10 +403,97 @@ export default function HomePage() {
                   {state.data.perDay}
                   <span className="text-secondary ml-2 text-sm font-normal">个词</span>
                 </p>
-                <p className="text-secondary mt-3 text-xs">约 {state.data.perDayMinutes} 分钟</p>
+                {/* 「这次有多少时间」的唯一入口。做成一枚可点的小字，而不是弹窗 ——
+                    打开后要尽快看到词，绝不能用一次选择把人挡在外面。 */}
+                <button
+                  type="button"
+                  onClick={() => setBudgetOpen((v) => !v)}
+                  aria-expanded={budgetOpen}
+                  className="text-secondary hover:text-primary ease-soft -ml-1 mt-3 flex items-center gap-1 rounded-sm px-1 py-0.5 text-xs tabular-nums transition-colors duration-200"
+                >
+                  这次 {state.data.budgetMinutes} 分钟
+                  <ChevronDown />
+                </button>
               </div>
               <ProgressRing value={state.data.doneToday} total={state.data.perDay} />
             </div>
+
+            {/* 挡位条：展开在卡内，不遮挡、不跳页。选完立即重排 ——
+                用户此刻就知道"时间不够就少练点"，不用去设置页翻。 */}
+            {budgetOpen && (
+              <div className="mt-4">
+                {/* 五格等宽成一行 —— 用 flex-wrap 时「自定义」会被挤到第二行，
+                    看着像掉出来的。等宽也让它读起来像一排刻度，而不是五个按钮。 */}
+                <div className="grid grid-cols-5 gap-1.5">
+                  {BUDGET_TIER_MINUTES.map((m) => {
+                    const on = state.data.budgetMinutes === m;
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => pickBudget(m)}
+                        aria-pressed={on}
+                        className={`ease-soft rounded-md border px-1 py-2.5 text-center text-xs tabular-nums transition-colors duration-200 ${
+                          on
+                            ? "border-brand-600 bg-surface text-brand-800 font-medium"
+                            : "border-subtle text-secondary hover:border-strong"
+                        }`}
+                      >
+                        {m} 分钟
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={toggleCustom}
+                    aria-pressed={customActive}
+                    className={`ease-soft rounded-md border px-1 py-2.5 text-center text-xs transition-colors duration-200 ${
+                      customActive
+                        ? "border-brand-600 bg-surface text-brand-800 font-medium"
+                        : "border-subtle text-secondary hover:border-strong"
+                    }`}
+                  >
+                    自定义
+                  </button>
+                </div>
+
+                {customOpen && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={CUSTOM_MINUTE_MIN}
+                      max={CUSTOM_MINUTE_MAX}
+                      value={customDraft}
+                      onChange={(e) => setCustomDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") applyCustom();
+                      }}
+                      placeholder="15"
+                      aria-label="自定义分钟数"
+                      className="border-subtle text-primary w-16 rounded-md border px-2 py-1.5 text-xs tabular-nums"
+                    />
+                    <span className="text-secondary text-xs">分钟</span>
+                    <button
+                      type="button"
+                      onClick={applyCustom}
+                      className="bg-brand-600 text-on-brand ease-soft rounded-md px-3 py-1.5 text-xs font-medium transition-opacity duration-200 active:scale-[0.99]"
+                    >
+                      照这个排
+                    </button>
+                  </div>
+                )}
+
+                {/* 时长给得特别长时，词量会被「一天最多多少个」这道安全阀截住 ——
+                    不说清楚，用户会以为时长没生效。 */}
+                <p className="text-tertiary mt-2 text-[11px] leading-relaxed">
+                  改时长会重新排今天这一单。
+                  {state.data.budgetMinutes - state.data.perDayMinutes >= 3
+                    ? ` 一天最多 ${LIMITS.daily_cap} 个词，所以这一单实际约 ${state.data.perDayMinutes} 分钟 —— 再多就只剩疲劳了。`
+                    : ""}
+                </p>
+              </div>
+            )}
 
             <p className="text-secondary border-strong mt-5 border-t pt-4 text-xs leading-relaxed">
               {state.data.brief}
@@ -435,8 +598,8 @@ export default function HomePage() {
           <QuietNote title="数据说明（必须让你知道）">
             {DATA_HONEST_NOTE}
             <br />
-            复习间隔还没接（科学复习调度排在阶段 2），现在只按确定性顺序排 ——
-            顺序是稳的、每天不会跳，但不是「最科学」的那种。
+            复习顺序现在按 FSRS 排：谁快忘了谁先上，答错的词会更快回来。
+            这套参数是通用默认值，还没按你个人的记忆调过 —— 比固定顺序准，但还不是为你量身调的。
           </QuietNote>
         </div>
       )}

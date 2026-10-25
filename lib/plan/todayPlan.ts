@@ -35,7 +35,13 @@ export interface AssemblePlanInput {
   snapshot: WordSnapshot;
   /** 策略包那一行（阶段 0 固定是中考） */
   goalProfile: GoalProfile;
-  /** 用户答的"每天多少分钟" */
+  /**
+   * **这一次**给多少分钟（首页的时长挡位 / 引导结果页的 `profile.daily_minutes`）。
+   *
+   * 注意它不是排课规则，只是"每日词量的分母"：本函数用 `dailyCapFor` 把它换成词数，
+   * 而"到期优先、新词受 new_ratio 约束"那些规则一条都不看它。
+   * 所以给 3 分钟和给 20 分钟，排出来的**顺序逻辑完全一样**，只是长度不同。
+   */
   dailyMinutes: number;
   /** 还没稳住的词（来自 review_logs）。不传 = 当没有 */
   weakWordIds?: readonly string[];
