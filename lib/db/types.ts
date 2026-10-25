@@ -7,6 +7,9 @@
  *   2. words 表不存放任何课程 / 考试标签，归属一律走 word_placements。
  *   3. word_placements.sense_id 允许为空，但字段必须存在（否则后期无法演进到"按义项背"）。
  */
+// `ClozeBlank` 是完形填空的题目结构（纯类型 + 纯函数，不碰数据库）。
+// 复用它而不是在这里重写一份：两处各写一遍，"选项 4 个"这条约束就有两个说法了。
+import type { ClozeBlank } from "@/lib/study/cloze";
 
 // ---------------------------------------------------------------- 内容层（共享只读）
 
@@ -217,6 +220,53 @@ export interface UserExample {
   gloss: string;
   interest_tag: string;
   is_ai_generated: boolean;
+}
+
+/**
+ * 一套完形填空（生成后存本地，下次直接拿来用）。
+ *
+ * ── 为什么存本地、不存云端公共池 ────────────────────────────
+ * 规格书原本设想的是云端公共池（同单元同难度复用，成本不随人数线性上涨）。
+ * 这一版按"与例句生成逻辑差不多"的做法先落本地缓存：**同一台设备、同一个单元，
+ * 只调一次 AI**。好处是零基础设施改动、断网也能重做；
+ * 代价是**每个新用户第一次都要付一次生成成本**。
+ *
+ * 这个代价是明摆着的，不是没想到：等用户量真的上来，
+ * 把这张表搬到 Supabase 做成公共池就行 —— 表结构与字段已经按
+ * "可以直接上云"的形状写好了（snake_case、没有本地特有的字段）。
+ *
+ * ── `content_version` 是干什么的 ────────────────────────────
+ * 词库更新后（`seed-data.json` 的内容指纹变了），旧的题可能考着已经不存在的词。
+ * 读缓存时比一下指纹，不一致就当作没有缓存、重新出题。
+ * 没有这个字段的话，用户会一直看到旧词库时代的题，**而且不会报错**。
+ */
+export interface ClozeSet {
+  /** `cz:<user_id>:<unit_id>` —— 带主人，见 `lib/db/ids.ts` */
+  id: string;
+  user_id: string;
+  /** 单元 id（如 `wys_2024:8A:U1`）。**不是 `unit_code`** —— 那个三册重号 */
+  unit_id: string;
+  /**
+   * 人话的单元名（「外研社版 · 八年级上册 · Unit 1 This is me」）。
+   * 存一份快照：从缓存直接打开页面时，不必再去 join units / volumes / curricula 三张表。
+   */
+  unit_label: string;
+  title: string;
+  /** 短文原文，空位写成 `{{1}}` … `{{10}}`。存原文而不是拆好的段落，
+   *  这样拆题逻辑只有 `lib/study/cloze.ts` 一处，界面与判分用的是同一份 */
+  passage: string;
+  blanks: ClozeBlank[];
+  /**
+   * `ai` = 模型写的；`template` = 兜底通用题。
+   *
+   * ⚠️ **兜底题不会被存进这张表**（见 `clozeRepo.saveCloze`）：
+   * 存了之后用户下次来还是这套跟他的单元无关的题，而且会挡住"下次重试"。
+   */
+  source: "ai" | "template";
+  model: string | null;
+  /** 生成时的词库内容指纹 */
+  content_version: string;
+  created_at: string;
 }
 
 /**

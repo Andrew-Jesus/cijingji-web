@@ -12,7 +12,7 @@
  *   ③ 是"内容不合格"，重试一次通常能修好。
  * 所以解析函数返回**结构化的失败原因**，让上层决定要不要重试，而不是一律当失败。
  */
-import { aiExamplePayloadSchema, type AiExamplePayload } from "./contract";
+import { aiClozePayloadSchema, aiExamplePayloadSchema, type AiClozePayload, type AiExamplePayload } from "./contract";
 
 export type ParseFailure = "no_json" | "schema_mismatch";
 
@@ -102,6 +102,48 @@ export function parseExamplePayload(raw: string): ParseResult {
     // 判失败 → 上层重试一次 → 还不行就如实降到模板句并标注。这条路更慢，但每句话都是真的。
     return { ok: false, reason: "schema_mismatch" };
   }
+
+  return { ok: true, payload: parsed.data };
+}
+
+/** 完形填空的解析结果。返回形状与例句那个同构，上层执行器才能共用一条链 */
+export type ClozeParseResult =
+  | { ok: true; payload: AiClozePayload }
+  | { ok: false; reason: ParseFailure };
+
+/**
+ * 解析成 `{ title, passage, blanks[] }`。
+ *
+ * ── 与例句解析共用的两件事 ──────────────────────────────────
+ * `stripCodeFence` 与 `extractJsonObject` 都直接用，不另写一套：
+ * 它们解决的是"模型爱包 markdown 壳""后面爱补一句解释"这两个**通用**毛病，
+ * 跟任务无关。各任务各写一遍，迟早出现"例句能解析、完形不能"的诡异差异。
+ *
+ * ── 这里**只做格式转换**，不做业务校验 ────────────────────────
+ * 空数对不对、选项重不重复、挖空词在不在词表里 —— 全部交给
+ * `lib/study/cloze.ts` 那三道审核。分开的好处：
+ *   · zod 的报错是"expected array, received string"这种，排查时看不出人话；
+ *     审核给的是「第 3 空考的是 butterfly，它不在本单元词表里」；
+ *   · 审核要跑两遍（生成后 + 从缓存读出来），解析只跑一遍。
+ *
+ * ⚠️ `extractJsonObject` 是按**括号配平**扫描的，而 passage 里有 `{{1}}` 这种
+ * 双花括号 —— 它之所以不会算错，是因为扫描器在字符串内部会跳过所有括号
+ * （`inString` 分支）。改动那个函数时务必保住这条。
+ */
+export function parseClozePayload(raw: string): ClozeParseResult {
+  const text = stripCodeFence(raw);
+  const json = extractJsonObject(text);
+  if (!json) return { ok: false, reason: "no_json" };
+
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    return { ok: false, reason: "no_json" };
+  }
+
+  const parsed = aiClozePayloadSchema.safeParse(value);
+  if (!parsed.success) return { ok: false, reason: "schema_mismatch" };
 
   return { ok: true, payload: parsed.data };
 }

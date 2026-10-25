@@ -10,6 +10,7 @@ import Dexie, { type Table, type Transaction } from "dexie";
 import { exampleIdFor, planIdFor } from "./ids";
 import type {
   AiUsage,
+  ClozeSet,
   Curriculum,
   DailyPlan,
   GoalProfile,
@@ -59,6 +60,18 @@ const STORES = {
    * 所以字符串索引可以直接当时间索引用。
    */
   word_states: "id, user_id, &[user_id+word_id], [user_id+due]",
+
+  /**
+   * 完形填空的缓存。**一个人 + 一个单元 = 一套**（见 `ids.clozeIdFor`）。
+   *
+   * 唯一索引带 `user_id`：不带的话，同一台设备上第二个人打开同一个单元，
+   * 会看到第一个人缓存的那套题 —— 而他刚做的其实是别人的题。
+   * `id` 里已经带了主人，这个索引是**第二道口径**（与 `user_examples` 同一个做法）。
+   *
+   * 没有按 `created_at` 建索引：这套题的查询只有"按 (user, unit) 取一条"，
+   * 按时间列表的界面还没做。多建一个索引 = 多一处将来要解释"它到底为谁服务的"。
+   */
+  cloze_sets: "id, user_id, &[user_id+unit_id]",
 } as const;
 
 export class CijingjiDB extends Dexie {
@@ -79,6 +92,9 @@ export class CijingjiDB extends Dexie {
   ai_usage!: Table<AiUsage, string>;
   /** FSRS 记忆状态。本机缓存 —— 可从 `review_logs` 重放重建，见 types.ts */
   word_states!: Table<WordMemory, string>;
+
+  /** 完形填空缓存（按单元）。见 `lib/db/clozeRepo.ts` */
+  cloze_sets!: Table<ClozeSet, string>;
 
   constructor() {
     super("cijingji");
@@ -163,6 +179,19 @@ export class CijingjiDB extends Dexie {
      * 就多一处会不同步的地方）。
      */
     this.version(4).stores(STORES);
+
+    /**
+     * ── v5：新增 `cloze_sets`（完形填空缓存）──────────────────────
+     *
+     * **只建表，不升级任何数据。** 缓存不是事实 —— 表空了就是"还没出过题"，
+     * 第一次请求现生成一套填进去即可。所以这里既不用回填、也不用迁移，
+     * 与 v4（记忆状态必须懒回填，否则老用户进度看起来清零）性质完全不同。
+     *
+     * ⚠️ 这个空升级**必须存在**：Dexie 只在版本号提升时重建索引，
+     * 不写这一版，已经升过级的浏览器会一直留着 v4 的索引集合，
+     * 新表只对"全新装的用户"存在 —— 老用户一切正常，只是永远查不到缓存。
+     */
+    this.version(5).stores(STORES);
   }
 }
 

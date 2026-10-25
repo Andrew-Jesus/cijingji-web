@@ -398,6 +398,22 @@ export default function StudyPage() {
           };
         }
 
+        // ⚠️ 接口现在有两个任务，`ok: true` 之后必须再按 `task` 窄化一次。
+        // 理论上不会走到这里（上面请求的就是例句），但**类型上必须收窄** ——
+        // 而这正是这次改动的价值：如果哪天有人在这里读错字段，
+        // 编译期就会拦住，而不是在运行时拿到一个 `undefined` 再拼进界面。
+        if (data.task !== "example_personalized") {
+          return {
+            view: {
+              ...templateExample(facts, interestTag),
+              isAiGenerated: false,
+              note: "服务器返回了另一种任务的结果，先给你一句通用示例。",
+              model: null,
+            },
+            origin: "template",
+          };
+        }
+
         // 记账与缓存写入都**不阻塞展示**：用户已经看到句子了，
         // 后面的写库失败最多是"下次再生成一遍"，不该变成一句报错糊在脸上。
         void saveExample({

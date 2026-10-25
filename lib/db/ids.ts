@@ -56,3 +56,19 @@ export function exampleIdFor(wordId: string, interestTag: string, userId: string
 export function memoryIdFor(wordId: string, userId: string): string {
   return `st:${userId}:${wordId}`;
 }
+
+/**
+ * 完形填空编号：一个人 + 一个单元 = 一套题。
+ *
+ * 带主人的理由与上面几个一样：同一台设备上两个人登录时，"U1 的完形填空"
+ * 是他的缓存还是别人的，必须分得开。不带主人就会互相顶掉 ——
+ * 而且是**最难发现的那种顶掉**：题看着还是完整的题，只是考的单元不对。
+ *
+ * ⚠️ `unitId` 里**含冒号**（`wys_2024:8A:U1`），所以拼出来的编号里冒号不止三个。
+ * 这不影响使用，因为**全工程从不解析这个编号**（只生成、只比较）。
+ * 将来谁想 `id.split(":")` 取单元 —— 会拿到 `wys_2024`，出错但不报错。
+ * 要取单元请读行上的 `unit_id` 字段。
+ */
+export function clozeIdFor(unitId: string, userId: string): string {
+  return `cz:${userId}:${unitId}`;
+}

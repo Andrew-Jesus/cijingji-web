@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { exampleIdFor, planIdFor } from "./ids";
+import { clozeIdFor, exampleIdFor, planIdFor } from "./ids";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -82,6 +82,36 @@ describe("★ 回归闸门一：编号里必须一直带着主人", () => {
   });
 });
 
+describe("clozeIdFor：完形填空编号（一个人 + 一个单元）", () => {
+  const UNIT_A = "wys_2024:8A:U1";
+  const UNIT_B = "wys_2024:9A:U1";
+
+  it("同一个人、同一个单元 → 同一个 id（做第二遍拿到的是同一套题）", () => {
+    expect(clozeIdFor(UNIT_A, A)).toBe(clozeIdFor(UNIT_A, A));
+  });
+
+  it("★ 同一个单元、两个人 → 必须是两个 id（否则第二个人看到的是第一个人的题）", () => {
+    expect(clozeIdFor(UNIT_A, A)).not.toBe(clozeIdFor(UNIT_A, B));
+  });
+
+  it("★ 八上与九上的「Unit 1」不能撞 —— 这正是不能用 unit_code 当键的原因", () => {
+    // 两册的 unit_code 都是 "Unit 1"。拿它建 id 会把两套题并成一套，
+    // 而且不报错：用户做着八上的题，标题却写着九上。
+    expect(clozeIdFor(UNIT_A, A)).not.toBe(clozeIdFor(UNIT_B, A));
+  });
+
+  it("未登录的 local 与已登录账号不能撞", () => {
+    expect(clozeIdFor(UNIT_A, "local")).not.toBe(clozeIdFor(UNIT_A, A));
+  });
+
+  it("所有「主人 × 单元」组合两两不同", () => {
+    const users = ["local", A, B];
+    const units = [UNIT_A, UNIT_B, "wys_2024:8B:U2"];
+    const ids = users.flatMap((u) => units.map((unit) => clozeIdFor(unit, u)));
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
 /**
  * 门禁：**编号拼接只准出现在 `lib/db/ids.ts` 一处**。
  *
@@ -92,7 +122,13 @@ describe("★ 回归闸门一：编号里必须一直带着主人", () => {
  */
 describe("★ 回归闸门二：编号拼接不许出现第二处", () => {
   const ONLY_HOME = "lib/db/ids.ts";
-  const PATTERN = /`(plan|ex):\$\{/;
+  /**
+   * ⚠️ **加新编号格式时，必须把它加进这个正则。**
+   * 这个门禁原本只认 `plan:` 与 `ex:`，于是 `st:`（记忆状态，10-24 加的）
+   * 一直没有被盯着 —— 门禁照样是绿的，因为它压根不认识这个前缀。
+   * 「测试全绿」和「规则被守住」是两件事，差别就在这里。
+   */
+  const PATTERN = /`(plan|ex|st|cz):\$\{/;
 
   function walk(dir: string, out: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {

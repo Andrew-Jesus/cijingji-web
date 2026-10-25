@@ -84,11 +84,17 @@ export function gradeAnswer(
   return gradeRecallSpell({ typed: answer.value, card, knownLemmas });
 }
 
-/** 错因的中文说法。界面、反馈导出、日志共用一处，避免"三个地方三种叫法" */
+/**
+ * 错因的中文说法。界面、反馈导出、日志共用一处，避免"三个地方三种叫法"。
+ *
+ * `context` 的说法刻意**不说"看不懂"**：看不懂的是整篇文章，
+ * 而出错的是那个词 —— 说成"句子里没认出来"，用户才知道该补的是这个词。
+ */
 export const ERROR_TYPE_LABEL: Record<ErrorType, string> = {
   meaning: "释义记混了",
   spelling: "拼写错了",
   confusion: "和另一个词混了",
+  context: "句子里没认出来",
 };
 
 export function errorTypeLabel(t: ErrorType | null): string {

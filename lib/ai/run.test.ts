@@ -9,7 +9,7 @@ import {
 import type { WordFacts } from "./prompt";
 import { ProviderError } from "./provider";
 import { createCooldownStore } from "./retry";
-import { generateExample, type ChatCaller } from "./run";
+import { generateCloze, generateExample, type ChatCaller } from "./run";
 
 /**
  * 这一组测的是**整条链怎么走**：谁先上、失败之后换档还是重试、退避等多久、
@@ -333,5 +333,218 @@ describe("记账与兜底", () => {
     expect(out.source).toBe("template");
     expect(out.notes.join(" ")).toContain("慢");
     expect(out.notes.join(" ")).not.toContain("断网");
+  });
+});
+
+/* ══════════════════════════ 完形填空（第二个任务）══════════════════════════ */
+
+/**
+ * 这一组测两件在例句那边**不存在**的事：
+ *   ① **业务审核也算"这一次没成"** —— 结构合法但题目不能用时，要走重试，
+ *      而不是把废题发给用户；
+ *   ② **长任务有自己的超时与预算** —— 拿例句那套 12 秒/20 秒去写 200 词短文，
+ *      每次都会超时，然后走完整条降级链，用户等 40 秒还拿到通用题。
+ *
+ * 用例数据刻意与 `cloze.test.ts` 里那份同构，但不共享：两处断言的东西不同
+ * （那边测审核规则本身，这边测"审核没过时整条链怎么动"），共享反而会互相牵制。
+ */
+const CLOZE_WORDS = [
+  "join",
+  "help",
+  "bring",
+  "listen",
+  "finish",
+  "share",
+  "carry",
+  "explain",
+  "change",
+  "decide",
+].map((lemma) => ({
+  word_id: `w:${lemma}`,
+  lemma,
+  lemma_normalized: lemma,
+  meaning_zh: "（测试用释义）",
+}));
+
+const CLOZE_SENTENCE =
+  "Every morning the students walk to school together and talk about their lessons before class begins.";
+
+function clozePassage(): string {
+  const parts: string[] = [];
+  for (let i = 1; i <= 10; i++) {
+    parts.push(CLOZE_SENTENCE);
+    parts.push(`{{${i}}}`);
+  }
+  return parts.join(" ");
+}
+
+function clozePayload(): {
+  title: string;
+  passage: string;
+  blanks: { no: number; options: string[]; answer: number; word: string }[];
+} {
+  return {
+    title: "一个普通的早晨",
+    passage: clozePassage(),
+    blanks: CLOZE_WORDS.map((w, i) => ({
+      no: i + 1,
+      options: [w.lemma, "walked", "yellow", "seventh"],
+      answer: 0,
+      word: w.lemma,
+    })),
+  };
+}
+
+const GOOD_CLOZE = JSON.stringify(clozePayload());
+
+/** 结构完全合法、但第 1 空考的是词表以外的词 → 只有审核能拦住 */
+const OUT_OF_UNIT_CLOZE = JSON.stringify({
+  ...clozePayload(),
+  blanks: clozePayload().blanks.map((b, i) => (i === 0 ? { ...b, word: "butterfly" } : b)),
+});
+
+/** 结构合法、词也在表里，但两个选项一模一样 → 又一道只有审核能拦的 */
+const DUP_OPTION_CLOZE = JSON.stringify({
+  ...clozePayload(),
+  blanks: clozePayload().blanks.map((b, i) =>
+    i === 0 ? { ...b, options: [b.options[0], b.options[0], b.options[2], b.options[3]] } : b,
+  ),
+});
+
+async function runCloze(
+  script: Step[],
+  over: { env?: EnvLike; cooldown?: ReturnType<typeof createCooldownStore> } = {},
+) {
+  const { call, calls } = makeCaller(script);
+  const { clock, sleep } = makeClock();
+  const out = await generateCloze({
+    unitId: "wys_2024:8A:U1",
+    unitLabel: "外研社版 初中英语（2024 版）· 八年级上册 · Unit 1 This is me",
+    words: CLOZE_WORDS,
+    env: over.env ?? BOTH,
+    now: OFF_PEAK,
+    clock,
+    sleep,
+    log: () => undefined,
+    call,
+    cooldown: over.cooldown ?? createCooldownStore(),
+  });
+  return { out, calls };
+}
+
+describe("generateCloze / 第二个任务走的是同一条链", () => {
+  it("首选档写好 → source 是 ai，题是解析出来的那份", async () => {
+    const { out, calls } = await runCloze([{ kind: "ok", text: GOOD_CLOZE }]);
+
+    expect(calls).toHaveLength(1);
+    expect(out.source).toBe("ai");
+    expect(out.degraded).toBe(false);
+    expect(out.payload.blanks).toHaveLength(10);
+    expect(out.payload.title).toBe("一个普通的早晨");
+  });
+
+  it("记账里的 task 是 cloze_generate —— 两个任务的成本要能分开看", async () => {
+    const { out } = await runCloze([{ kind: "ok", text: GOOD_CLOZE }]);
+
+    expect(out.usages).toHaveLength(1);
+    expect(out.usages[0].task).toBe("cloze_generate");
+  });
+
+  it("挖空词不在本单元 → 判废并重试，第二次合格就成", async () => {
+    const { out, calls } = await runCloze([
+      { kind: "ok", text: OUT_OF_UNIT_CLOZE },
+      { kind: "ok", text: GOOD_CLOZE },
+    ]);
+
+    expect(calls).toHaveLength(2);
+    expect(out.source).toBe("ai");
+    expect(out.attempts.map((a) => a.ok)).toEqual([false, true]);
+    expect(out.attempts[0].error).toContain("butterfly");
+  });
+
+  it("选项重复 → 同样判废重试（zod 拦不住这一种）", async () => {
+    const { out } = await runCloze([
+      { kind: "ok", text: DUP_OPTION_CLOZE },
+      { kind: "ok", text: GOOD_CLOZE },
+    ]);
+
+    expect(out.source).toBe("ai");
+    expect(out.attempts[0].ok).toBe(false);
+    expect(out.attempts[0].error).toContain("重复");
+  });
+
+  it("两次都不合格 → 落通用题，并说明它不计入复习安排", async () => {
+    const { out } = await runCloze(
+      [
+        { kind: "ok", text: OUT_OF_UNIT_CLOZE },
+        { kind: "ok", text: OUT_OF_UNIT_CLOZE },
+      ],
+      { env: { DEEPSEEK_API_KEY: "d" } },
+    );
+
+    expect(out.source).toBe("template");
+    expect(out.model).toBeNull();
+    // 兜底是一整套真的能做的题，不是空壳
+    expect(out.payload.blanks).toHaveLength(10);
+    expect(out.payload.passage).toContain("{{1}}");
+    expect(out.notes.join(" ")).toContain("不计入你的复习安排");
+  });
+
+  it("一个 Key 都没配 → 直接给通用题，一次调用都不发", async () => {
+    const { out, calls } = await runCloze([], { env: {} });
+
+    expect(calls).toHaveLength(0);
+    expect(out.usages).toEqual([]);
+    expect(out.source).toBe("template");
+    expect(out.notes.join(" ")).toContain("API Key");
+    expect(out.notes.join(" ")).toContain("练习题");
+  });
+
+  it("单档超时是长任务那套（25 秒），不是例句的 12 秒", async () => {
+    const { calls } = await runCloze([{ kind: "ok", text: GOOD_CLOZE }]);
+
+    expect(calls[0].timeoutMs).toBe(25_000);
+    expect(calls[0].timeoutMs).not.toBe(DEFAULT_TIMEOUT_MS);
+  });
+
+  it("首选档挂了会去试第二档，而不是立刻给通用题", async () => {
+    // 每档最多试 2 次 → 两档都挂时总共 4 次调用
+    const { out, calls } = await runCloze([
+      { kind: "err", err: timeout() },
+      { kind: "err", err: timeout() },
+      { kind: "err", err: timeout() },
+      { kind: "err", err: timeout() },
+    ]);
+
+    expect(calls).toHaveLength(4);
+    // 两家都真的被试过 —— 这才是"降级链"的意义
+    expect(new Set(calls.map((c) => c.provider)).size).toBe(2);
+    expect(out.source).toBe("template");
+    expect(out.notes.join(" ")).toContain("慢");
+  });
+
+  it("完形的提示词走的是自己那份 system，不是例句那份", async () => {
+    const captured: string[] = [];
+    const { call } = makeCaller([{ kind: "ok", text: GOOD_CLOZE }]);
+    const wrapped: ChatCaller = async (spec, messages, opts) => {
+      captured.push(messages[0].content);
+      return call(spec, messages, opts);
+    };
+
+    await generateCloze({
+      unitId: "wys_2024:8A:U1",
+      unitLabel: "外研社版 八年级上册 Unit 1",
+      words: CLOZE_WORDS,
+      env: BOTH,
+      now: OFF_PEAK,
+      clock: () => 0,
+      sleep: async () => undefined,
+      log: () => undefined,
+      call: wrapped,
+      cooldown: createCooldownStore(),
+    });
+
+    expect(captured[0]).toContain("完形填空");
+    expect(captured[0]).not.toContain("一句英文短句");
   });
 });

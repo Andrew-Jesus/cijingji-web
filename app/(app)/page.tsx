@@ -567,10 +567,14 @@ export default function HomePage() {
             </dl>
           </section>
 
-          {/* ③.5 回顾页入口（阶段 2 · B3）
+          {/* ③.5 两条入口（阶段 2 · B3 / 阶段 3.5 · 完形）
               放在方案摘要之后、说明之前：用户读完"今天怎么练"，
-              下一个自然的念头就是"那前几天我练得怎么样"。
-              做成整块可点的行，而不是又一个小文字链 —— 页头已经有两条文字链了。 */}
+              下一个自然的念头就是"那前几天我练得怎么样"和"还有没有别的练法"。
+              做成整块可点的行，而不是又一个小文字链 —— 页头已经有两条文字链了。
+
+              完形那个入口**不预先出题**（`/cloze` 里才出）。
+              首页挂在这里的意义只是"让人知道有这条路"，不该在这里就花一次 AI 调用：
+              用户可能只是想看看今天练什么，点进来又退出去，那一次生成就白花了。 */}
           <button
             type="button"
             onClick={() => router.push("/review")}
@@ -579,6 +583,20 @@ export default function HomePage() {
             <span className="min-w-0">
               <span className="text-tertiary block text-[11px] tracking-[0.08em]">回头看</span>
               <span className="text-primary mt-2 block text-sm">这几天我一直在错什么</span>
+            </span>
+            <span className="text-tertiary shrink-0">
+              <ChevronRight />
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => router.push("/cloze")}
+            className="border-subtle bg-surface hover:border-strong ease-soft flex w-full items-center justify-between gap-3 rounded-lg border p-5 text-left transition-colors duration-200"
+          >
+            <span className="min-w-0">
+              <span className="text-tertiary block text-[11px] tracking-[0.08em]">练一篇完形</span>
+              <span className="text-primary mt-2 block text-sm">把这个单元的词放进一篇文章里</span>
             </span>
             <span className="text-tertiary shrink-0">
               <ChevronRight />

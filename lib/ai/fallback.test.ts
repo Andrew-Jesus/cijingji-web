@@ -86,7 +86,10 @@ describe("fallbackNote / 降级原因要分得清", () => {
   });
 
   it("五种原因的文案互不相同 —— 混在一起说等于没说，排查时也用不上", () => {
-    const texts = reasons.map(fallbackNote);
+    // ⚠️ 不能写成 `reasons.map(fallbackNote)`：`Array.map` 会把下标当第二个参数传进去，
+    // 而 `fallbackNote` 的第二个参数是 `kind`（"example" / "cloze"）——
+    // 于是下标 0 被当成 kind，静默落进 `default` 分支。这类错**不报错、只是文案变了**。
+    const texts = reasons.map((r) => fallbackNote(r));
     expect(new Set(texts).size).toBe(reasons.length);
   });
 

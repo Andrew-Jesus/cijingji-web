@@ -35,16 +35,53 @@ export interface PromptParts {
   variable: string;
 }
 
-export interface PromptInput {
+/** 例句任务的输入 */
+export interface ExamplePromptInput {
   facts: WordFacts;
   interestTag: string;
 }
 
-export interface TaskSpec {
-  id: AiTaskId;
+/**
+ * 完形填空要用的一个词。
+ *
+ * 除了解析出来要用的 `lemma` / `meaning_zh`，还带着 `word_id` 与 `lemma_normalized`：
+ * 前者是判分回流时写 `review_logs` 的锚，后者是三道审核里"这个词在不在本单元"的比对口径。
+ * 三样都从同一个地方（`groundTruth.lookupUnitVocabulary`）来，**不在这里重新查一遍**——
+ * 两处各查一遍，早晚会出现"提示词里给了 51 个词、审核只认 49 个"这种没头没尾的失败。
+ */
+export interface ClozeWordFacts {
+  /** 词库 id，如 `w:suppose` */
+  word_id: string;
+  lemma: string;
+  /** 归一形（小写、去连字符）。**审核认它，不认 `lemma`** */
+  lemma_normalized: string;
+  meaning_zh: string;
+}
+
+/** 完形填空任务的输入 */
+export interface ClozePromptInput {
+  /** 人话的单元名，如「外研社版 八年级上册 Unit 1 This is me」 */
+  unitLabel: string;
+  /** 这个单元的词汇表。**挖空只能从这里取** */
+  words: readonly ClozeWordFacts[];
+}
+
+/**
+ * 任务 → 它需要的输入类型。
+ *
+ * 用条件类型而不是让两个任务共用一个宽对象：共用会导致
+ * `buildClozeVariable` 里不得不写 `data.facts!` 这种断言，
+ * 而一旦有人传错，运行时拿到 `undefined` 才崩 —— 那时已经在提示词里了。
+ */
+type PromptInputFor<T extends AiTaskId> = T extends "cloze_generate"
+  ? ClozePromptInput
+  : ExamplePromptInput;
+
+export interface TaskSpec<T extends AiTaskId> {
+  id: T;
   /** 逐字稳定的 system 提示词 */
   system: string;
-  buildVariable: (input: PromptInput) => string;
+  buildVariable: (data: PromptInputFor<T>) => string;
 }
 
 /**
@@ -70,7 +107,7 @@ const EXAMPLE_SYSTEM = [
   "10. 不要写“XX 的意思是……”“这个词表示……”这类讲解句，只写正常的一句话。",
 ].join("\n");
 
-function buildExampleVariable({ facts, interestTag }: PromptInput): string {
+function buildExampleVariable({ facts, interestTag }: ExamplePromptInput): string {
   // 中英两个名字**必须成对取**（见 `resolveInterest` 的注释）：
   // 各调一个函数会在"认不出的 tag"上得出互相打架的两个名字 ——
   // 模型接到「英文 everyday life（中文 篮球）」这种自相矛盾的输入，写出来的句子也跟着拧巴。
@@ -86,17 +123,108 @@ function buildExampleVariable({ facts, interestTag }: PromptInput): string {
   ].join("\n");
 }
 
-export const TASK_SPECS: Record<AiTaskId, TaskSpec> = {
+/**
+ * 完形填空的固定前缀。
+ *
+ * ⚠️ **改这段就让缓存全部失效一次**（前缀变了），所以别为了措辞好看频繁改。
+ * ⚠️ **任何"随单元变化"的东西都不许进这里**（单元名、词表都在 user 消息里）——
+ * 一旦混进来，每个单元都是新前缀，缓存命中率归零，而且界面上看不出来。
+ *
+ * ── 三条最容易被忽略、但决定题目能不能用的约束 ─────────────────
+ *   · **四个选项必须是"同一词性的不同词"，不能是同一个词的不同形式**。
+ *     这条如果不说，模型极爱给 `go / went / going / goes` —— 那变成了纯语法题，
+ *     而我们要的是"在语境里认出这个词"，是词汇复习。用户做十个空只在练时态，
+ *     跟本单元的单词一个都没关系。
+ *   · **挖空处必须能靠上下文唯一确定答案**。这条不说，模型会在完全没有线索的地方
+ *     挖空，于是四个选项"都说得通"，判分变成猜运气 —— 而答错会真的写进复习安排。
+ *   · **`word` 写词表里的原形**。它是回流到复习安排的锚：写形变（joined）就对不上
+ *     词库的 `join`，于是那次答错记到一个不存在的词上。
+ */
+const CLOZE_SYSTEM = [
+  "你是给中国初中生出英语完形填空题的助手。",
+  "",
+  "你会收到：教材单元名、这个单元的词汇表（英文原形 + 课本给的中文意思）。这些词都是**已经确认过的事实**，你只能使用它们，不要改写、不要替换、不要自己加词。",
+  "",
+  "你的任务：写一篇英语短文，并在其中挖 10 个空，每空配 4 个选项。",
+  "",
+  "必须遵守：",
+  "1. 只输出 JSON，不要任何解释、不要 markdown 代码块、不要多余字符。",
+  '2. JSON 结构固定为：{"title": "<中文标题>", "passage": "<英文短文>", "blanks": [{"no": 1, "options": ["", "", "", ""], "answer": 0, "word": ""}]}',
+  "3. blanks 必须正好 10 个，no 从 1 到 10 各出现一次。",
+  "4. 每空 options 必须正好 4 个、互不相同、都是英语，且**四个必须是同一词性的不同词**。绝对不要给成同一个词的不同形式（比如 go / went / going / goes）—— 那是语法题，不是词汇题。",
+  "5. answer 是正确选项在 options 里的下标，从 0 开始（0~3）。",
+  "6. 每空考的词必须来自我给的那个词汇表。word 字段填它在词汇表里的**原形**（比如词汇表里是 join，就不要填 joined）。挑词时优先选有实际意思的词（名词、动词、形容词、副词），不要挑 the / of / very 这种只起连接作用的功能词。",
+  "7. passage 里挖空的地方写成 {{1}} 到 {{10}}，每个编号只出现一次，并且按从上到下的顺序编号。",
+  "8. 短文要求：大约 160~180 个英文词；初中水平的词汇和语法；有完整的情节或说明，读起来是一篇正常文章，不是拼凑的句子；不要出现真实的教材原文。",
+  "9. 每个空都必须能**只靠上下文**判断出唯一正确答案。做不到就别在那里挖空 —— 四个选项都说得通的空等于让人猜。",
+  "10. 不要出现真实人名（用 a student、our teacher、my friend 这类）、品牌名、具体日期、比分、分数、名次、金额、网址、邮箱。",
+  "11. 不要出现「真题」「押题」「原题」「考过」「某年某地考过」之类的说法，也不要提到任何考试。",
+  "12. 不要用 emoji、颜文字、连续感叹号。",
+  "13. title 是中文标题，不超过 12 个字，概括这篇短文讲了什么。",
+  "14. 输出前自己核对一遍：blanks 是不是正好 10 项？每个 no 是不是 1 到 10 各一次？每个 answer 是不是真的指向正确选项？passage 里是不是正好有 {{1}} 到 {{10}} 各一次？不满足就重写，不要输出残缺的结果。",
+].join("\n");
+
+/**
+ * 完形填空的变量部分：单元名 + 词表。
+ *
+ * 为什么词表要**连中文意思一起给**：只给英文原形时，模型会按自己的理解挖空，
+ * 而课本里这个词考的可能不是那个意思（如 `suppose` 课本给「猜想」，
+ * 模型可能按「假设」去造句）。给了中文意思，它才会贴着课本的那个义项写。
+ */
+function buildClozeVariable({ unitLabel, words }: ClozePromptInput): string {
+  const list = words
+    .map((w, i) => `${i + 1}. ${w.lemma}（${w.meaning_zh}）`)
+    .join("\n");
+
+  return [
+    `教材单元：${unitLabel}`,
+    "",
+    `本单元词汇表（共 ${words.length} 个词，挖空只能从这里取）：`,
+    list,
+    "",
+    "请出一套 10 个空的完形填空。",
+  ].join("\n");
+}
+
+/**
+ * 任务登记表。
+ *
+ * ⚠️ **必须写在 `EXAMPLE_SYSTEM` / `CLOZE_SYSTEM` 之后**：`const` 没有提升，
+ * 放在前面会报 `Cannot access before initialization` ——
+ * 而这类错误发生在模块加载时，整条 AI 链路会一起挂掉（不是某一个任务降级）。
+ */
+export const TASK_SPECS: { [K in AiTaskId]: TaskSpec<K> } = {
   example_personalized: {
     id: "example_personalized",
     system: EXAMPLE_SYSTEM,
     buildVariable: buildExampleVariable,
   },
+  cloze_generate: {
+    id: "cloze_generate",
+    system: CLOZE_SYSTEM,
+    buildVariable: buildClozeVariable,
+  },
 };
 
-export function buildPrompt(task: AiTaskId, input: PromptInput): PromptParts {
-  const spec = TASK_SPECS[task];
-  return { fixed: spec.system, variable: spec.buildVariable(input) };
+/**
+ * 拼提示词。
+ *
+ * ── 为什么用条件类型绑住 `data` ──────────────────────────────
+ * `buildPrompt("cloze_generate", { facts, interestTag })` 这种传错，
+ * 编译期就会报错。而如果两个任务共用一个宽 `PromptInput`（所有字段都可选），
+ * 传错只会在运行时变成提示词里的一行 `undefined` —— 模型照样会写出点什么，
+ * 于是你拿到一道"看似正常、其实没有词表约束"的题，**只有审核能拦住，日志里看不出异常**。
+ *
+ * ── 中间那两行的 `as unknown as` 是干什么的 ────────────────────
+ * `TASK_SPECS[task]` 在 TS 眼里是"两个 TaskSpec 的并集"，取不出一个能接收
+ * `PromptInputFor<T>` 的 `buildVariable`。但**表本身由 `{ [K in AiTaskId]: TaskSpec<K> }`
+ * 钉死了**：键与 `AiTaskId` 一一对应，每个键的 builder 只接受对应类型的输入。
+ * 所以"按 task 取到另一个任务的 builder"在类型层面不可能发生 —— 这次转型是安全的，
+ * 它只是把"表是对的"这件事告诉编译器。
+ */
+export function buildPrompt<T extends AiTaskId>(task: T, data: PromptInputFor<T>): PromptParts {
+  const spec = TASK_SPECS[task] as unknown as TaskSpec<T>;
+  return { fixed: spec.system, variable: spec.buildVariable(data) };
 }
 
 /**

@@ -66,8 +66,17 @@
  * 最终落到模板句。学习页永远拿得到一句例句（这是"永不因 AI 失败而卡住"的底）。
  */
 
-/** 阶段 0 唯一的 AI 任务。以后新增任务 = 往这里加一项 + 在 prompt.ts 加它的提示词 */
-export const AI_TASKS = ["example_personalized"] as const;
+/**
+ * 全部 AI 任务。以后新增任务 = 往这里加一项 + 在 `prompt.ts` 加它的提示词
+ * + 在 `AI_TASK_TIER` 落一次户 + 在 `AI_TASK_MAX_OUTPUT` 给个预算。
+ *
+ * ⚠️ 这四件事**少一件都会出事，而且都不报错**：
+ *   · 漏了档位 → `AI_TASK_TIER[task]` 是 `undefined` → `TIER_ORDER[undefined]` 崩在运行时；
+ *   · 漏了输出预算 → 拿全局那 180 token（只够一句话），长任务被**悄悄截断**；
+ *   · 漏了提示词 → `TASK_SPECS[task]` 是 `undefined`，拼提示词时当场崩。
+ * 所以新任务的单测里要有一条"这四个表都覆盖到了"的断言。
+ */
+export const AI_TASKS = ["example_personalized", "cloze_generate"] as const;
 export type AiTaskId = (typeof AI_TASKS)[number];
 
 /* ══════════════════════════ 档位 ══════════════════════════ */
@@ -203,6 +212,15 @@ export const TIER_ORDER: Record<AiTaskTier, readonly ProviderId[]> = {
  */
 export const AI_TASK_TIER: Record<AiTaskId, AiTaskTier> = {
   example_personalized: "cheap",
+  /**
+   * 完形填空走 `standard`：它要一次写出 150~200 词的连贯短文，
+   * 还要挖 10 个空、每空配 4 个互不相同的选项、保证只有一个是"正确且唯一"的。
+   * 这是"读题 → 谋篇 → 出题 → 自检"的组合活，不是照模板填一句话。
+   *
+   * 现在两档顺序相同（都 DeepSeek 打头），所以这一行**暂时不改变任何行为** ——
+   * 它的价值是：将来要给长文本单独换更强的模型时，只改 `TIER_ORDER.standard` 一处。
+   */
+  cloze_generate: "standard",
 };
 
 /* ══════════════════════════ 超时与预算 ══════════════════════════ */
@@ -262,6 +280,71 @@ export const MIN_ATTEMPT_MS = 2_500;
  * 一句话记住：**"输出预算给多少"取决于"这一档会不会思考"**。
  */
 export const MAX_OUTPUT_TOKENS = 180;
+
+/**
+ * **每个任务的输出预算下限**（`max_tokens`）。
+ *
+ * ── 为什么必须有这张表（2026-10-25，做完形填空时踩到的坑）──────────
+ * 在那之前全项目只有一个 `MAX_OUTPUT_TOKENS = 180`，因为只有一个任务：写一句例句。
+ * 而完形填空要吐一篇 150~200 词的短文 + 10 个空 × 4 个选项的 JSON，
+ * 保守估计 **1200~2000 token**。
+ *
+ * 如果它拿到 180，会发生什么：模型写到一半被硬截断 → JSON 括号不配平 →
+ * 我们自己判"格式不合格" → 重试一次 → 再截断一次 → 落到兜底。
+ * 整个过程 **HTTP 200、不抛异常**，只在日志里看到"模型输出不合格"，
+ * 看起来像"这个模型不会写题"，实际是预算给错了。
+ * （这和 `config.ts` 头部「思考模式」那段是同一类事故：**预算不够时静默失败**。）
+ *
+ * ── 口径：这是**下限**，不是精确值 ────────────────────────────
+ * 真实预算是 `max(本表的值, 这一档自带的值)`（见 `resolveModelChain`）。
+ * 为什么要取大而不是覆盖：`PROVIDERS` 里 GLM 的 2048 是"思考链要吃掉一部分"的余量，
+ * 强行用 180 覆盖它会立刻退化成一堆空返回 —— 那两个数各自都对，取大的那个才安全。
+ *
+ * ── 定值的依据 ──────────────────────────────────────────────
+ *   · 例句 180：见上一段注释（实测 35~90 token，留了充裕余量）；
+ *   · 完形 2400：短文 200 词约 300 token，10 个空 × 4 选项约 250 token，
+ *     加 JSON 结构与中文标题约 100 token，正文合计约 650；给 2400 是留给
+ *     "模型把选项写长一点 / 多写一句收尾"的余量，同时**不至于让上限变成等待时间**。
+ */
+export const AI_TASK_MAX_OUTPUT: Record<AiTaskId, number> = {
+  example_personalized: MAX_OUTPUT_TOKENS,
+  cloze_generate: 2400,
+};
+
+/**
+ * **长任务**的单档超时与整条链总预算。
+ *
+ * 为什么例句那套默认值（12 秒 / 20 秒）不能给它用：写 200 词短文是"一次性长输出"，
+ * 12 秒几乎必然超时，于是每次都要走完"首选档失败 → 退避 → 兜底档"的全套流程，
+ * 用户等 40 秒还拿到了降级结果 —— 比一开始就多给点时间还慢。
+ *
+ * ⚠️ **为什么单独起名字（`AI_TIMEOUT_CLOZE_MS`），而不是复用 `AI_TIMEOUT_MS`**：
+ * `AI_TIMEOUT_MS` 在很多老环境里**已经填着 12000**（旧版 `.env.example` 就把它当必填样例）。
+ * 如果长任务读它，就等于"今天算好的超时，被一条早就存在的旧配置悄悄改回 12 秒"——
+ * 而且不报错，只表现为"完形填空老是出不来"。这类"配置悄悄抵消修复"是最难查的。
+ * 所以：**长任务自带默认值，要用环境变量改就用它自己的名字**。
+ *
+ * 超时给 25 秒、总预算给 40 秒的取舍：写 200 词关掉思考后实测在 10~20 秒区间，
+ * 25 秒留了 5 秒余量；总预算 40 秒 = 首选档 25 秒失败后，兜底档还有 15 秒可试
+ * （不够就落模板题，不让用户干等到 50 秒）。
+ */
+export interface TaskLimits {
+  timeoutMs: number;
+  totalBudgetMs: number;
+  /** 单独覆盖超时的环境变量名 */
+  timeoutEnv: string;
+  /** 单独覆盖总预算的环境变量名 */
+  budgetEnv: string;
+}
+
+export const AI_TASK_LIMITS: Partial<Record<AiTaskId, TaskLimits>> = {
+  cloze_generate: {
+    timeoutMs: 25_000,
+    totalBudgetMs: 40_000,
+    timeoutEnv: "AI_TIMEOUT_CLOZE_MS",
+    budgetEnv: "AI_TOTAL_BUDGET_CLOZE_MS",
+  },
+};
 
 /* ══════════════════════════ 重试 ══════════════════════════ */
 
@@ -356,12 +439,19 @@ function readEnv(env: EnvLike, key: string): string | undefined {
  *
  * **缺 Key 的一档直接跳过（不抛错）** —— 所以开发机上没配 Key 也能跑通全流程（落到模板句）；
  * 也所以"只配了 GLM"时，GLM 就是这条链的首选（不会被误标成降级）。
+ *
+ * `task` 可选。**不传 = 拿到不带任务色彩的一档**（等价于"只配了哪家、什么模型"），
+ * 现在只有 `hasAnyProvider` 与 `resolveTotalBudgetMs` 这么用。
+ * 传了就会按任务调整输出预算与超时，见 `AI_TASK_MAX_OUTPUT` / `AI_TASK_LIMITS`。
  */
 export function resolveModelChain(
   tier: AiTaskTier = "cheap",
   env: EnvLike = process.env,
+  task?: AiTaskId,
 ): ModelSpec[] {
   assertServerSide("resolveModelChain");
+
+  const taskOutput = task ? AI_TASK_MAX_OUTPUT[task] : 0;
 
   const chain: ModelSpec[] = [];
   for (const id of TIER_ORDER[tier]) {
@@ -375,8 +465,10 @@ export function resolveModelChain(
       baseUrl: (readEnv(env, def.baseEnv) ?? def.defaultBase).replace(/\/+$/, ""),
       apiKey,
       free: def.free,
-      timeoutMs: resolveTimeoutMsFor(def.id, env),
-      maxOutputTokens: def.defaultMaxOutputTokens ?? MAX_OUTPUT_TOKENS,
+      timeoutMs: task ? resolveTaskTimeoutMs(task, def.id, env) : resolveTimeoutMsFor(def.id, env),
+      // **取大不取小**：这一档自带的 2048 是"思考链余量"，任务给的是"正文需要多少"，
+      // 两个数各自都对，谁大听谁的（理由见 `AI_TASK_MAX_OUTPUT` 的注释）。
+      maxOutputTokens: Math.max(def.defaultMaxOutputTokens ?? MAX_OUTPUT_TOKENS, taskOutput),
       thinkingControl: def.thinkingControl,
     });
   }
@@ -385,7 +477,30 @@ export function resolveModelChain(
 
 /** 按任务拿它的链路。业务代码只调这一个 —— 不自己判断该用哪档 */
 export function resolveModelChainForTask(task: AiTaskId, env: EnvLike = process.env): ModelSpec[] {
-  return resolveModelChain(AI_TASK_TIER[task], env);
+  return resolveModelChain(AI_TASK_TIER[task], env, task);
+}
+
+/**
+ * 某个任务在某一档上的单次超时。
+ *
+ * 没有登记在 `AI_TASK_LIMITS` 里的任务（也就是例句）**完全走原来的口径**，
+ * 行为逐字不变 —— 这一条很重要，例句是线上跑了很久的路径，不能因为加了新任务被改到。
+ */
+export function resolveTaskTimeoutMs(
+  task: AiTaskId,
+  id: ProviderId,
+  env: EnvLike = process.env,
+): number {
+  const limits = AI_TASK_LIMITS[task];
+  if (!limits) return resolveTimeoutMsFor(id, env);
+
+  // 长任务自己的环境变量优先（名字独立，见 `AI_TASK_LIMITS` 的注释）
+  const perTask = readPositiveInt(readEnv(env, limits.timeoutEnv), 0, TIMEOUT_CAP_MS);
+  if (perTask > 0) return perTask;
+
+  // ⚠️ 这里**刻意不走 `free` 档那 4 秒**：长任务的耗时是活儿的固有属性，
+  // 跟"这一档是不是免费"无关。给免费档硬套 4 秒，只会让每一次都注定超时。
+  return limits.timeoutMs;
 }
 
 function readPositiveInt(raw: string | undefined, fallback: number, max: number): number {
@@ -436,8 +551,27 @@ export function resolveTimeoutMsFor(id: ProviderId, env: EnvLike = process.env):
  *
  * 一档都没配 Key 时（开发机），退回看**这个档位登记的第一家**的默认超时 ——
  * 这样"我把默认超时调长了，预算得跟着抬"这条直觉仍然成立。
+ *
+ * ── `task` 参数（2026-10-25 加的）──────────────────────────
+ * 不传 = 原来的行为（例句走这条）。传了而该任务登记过 `AI_TASK_LIMITS`，
+ * 就改走"长任务"那一套：读它自己的预算环境变量、用它自己的默认值，
+ * **不再看 `AI_TOTAL_BUDGET_MS`**（那个 20 秒会把写短文的请求掐死）。
  */
-export function resolveTotalBudgetMs(env: EnvLike = process.env, tier: AiTaskTier = "cheap"): number {
+export function resolveTotalBudgetMs(
+  env: EnvLike = process.env,
+  tier: AiTaskTier = "cheap",
+  task?: AiTaskId,
+): number {
+  const limits = task ? AI_TASK_LIMITS[task] : undefined;
+
+  // 长任务：自己的预算 → 自己的环境变量 → 内置默认，**不读 `AI_TOTAL_BUDGET_MS`**
+  // （理由同 `AI_TASK_LIMITS` 那段：老环境里那个值可能只有 20 秒，会把长任务掐死）
+  if (limits && task) {
+    const base = readPositiveInt(readEnv(env, limits.budgetEnv), limits.totalBudgetMs, 120_000);
+    const firstId = resolveModelChain(tier, env, task)[0]?.provider ?? TIER_ORDER[tier][0];
+    return Math.max(base, resolveTaskTimeoutMs(task, firstId, env));
+  }
+
   const budget = readPositiveInt(
     readEnv(env, "AI_TOTAL_BUDGET_MS"),
     DEFAULT_TOTAL_BUDGET_MS,

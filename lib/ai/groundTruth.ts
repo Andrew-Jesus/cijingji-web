@@ -16,7 +16,7 @@
  * 只把这一层的实现换掉。
  */
 import { seedBundle } from "@/lib/db/seed";
-import type { WordFacts } from "./prompt";
+import type { ClozeWordFacts, WordFacts } from "./prompt";
 
 /**
  * word_id → 事实。**模块级构建一次**，之后都是查表。
@@ -64,4 +64,110 @@ export function lookupWordFacts(wordId: string): WordFacts | null {
 export function groundTruthSize(): number {
   if (!index) index = buildIndex();
   return index.size;
+}
+
+/* ══════════════════════ 按单元取词表（完形填空用）══════════════════════ */
+
+/**
+ * 词表里的一项。
+ *
+ * **直接复用 `prompt.ts` 的 `ClozeWordFacts`**，不在这里另定义一份同形状的类型。
+ * 理由：这两处一旦分家，将来给词加一个字段（比如音标）就会出现
+ * "提示词那边有、审核这边没有"的错位，而 TypeScript 只在赋值处报错、
+ * 在 `as` 与对象 spread 里一声不吭。
+ */
+export type UnitWord = ClozeWordFacts;
+
+export interface UnitVocabulary {
+  unit_id: string;
+  /** 人话标签，直接进提示词变量部分，如「外研社版 初中英语（2024 版）· 八年级上册 · Unit 1 This is me」 */
+  unit_label: string;
+  words: UnitWord[];
+}
+
+let unitIndex: Map<string, UnitVocabulary> | null = null;
+
+/**
+ * 建 unit_id → 词表的索引。
+ *
+ * ── 三处容易做错、且**都不会报错**的地方 ──────────────────────
+ * ① **必须按 `word_id` 去重**。`word_placements` 里同一个词在一个单元可能有多条
+ *    （`role` 不同：new / review / extension）。不去重的话，词表里会出现两行 `suppose`，
+ *    模型很可能把它挖成两个空 —— 一道题考同一个词两次，而且没人会发现。
+ * ② **没有义项的词要跳过**。与 `buildIndex` 同一个口径：宁可少给一个词，
+ *    也不要给模型一行「suppose（）」让它自己编一个意思。
+ * ③ **单元标签用 id 拼出来，不要用 `unit_code` 猜**。`unit_code`（"Unit 1"）
+ *    在三册里重号，靠它拼标签会得出"Unit 1"然后你分不清是哪本书的。
+ */
+function buildUnitIndex(): Map<string, UnitVocabulary> {
+  const volumeById = new Map(seedBundle.volumes.map((v) => [v.id, v]));
+  const curriculumById = new Map(seedBundle.curricula.map((c) => [c.id, c]));
+  const wordById = new Map(seedBundle.words.map((w) => [w.id, w]));
+
+  // 主义项（与 buildIndex 同一个口径：一个词只练课本里考的那个意思）
+  const primarySense = new Map<string, string>();
+  for (const s of seedBundle.senses) {
+    if (!s.is_primary) continue;
+    if (!primarySense.has(s.word_id)) primarySense.set(s.word_id, s.cn_meaning);
+  }
+
+  const wordsByUnit = new Map<string, UnitWord[]>();
+  const seenByUnit = new Map<string, Set<string>>();
+
+  for (const p of seedBundle.word_placements) {
+    const word = wordById.get(p.word_id);
+    const meaning = primarySense.get(p.word_id)?.trim();
+    if (!word || !meaning) continue;
+
+    let seen = seenByUnit.get(p.unit_id);
+    if (!seen) {
+      seen = new Set<string>();
+      seenByUnit.set(p.unit_id, seen);
+    }
+    if (seen.has(p.word_id)) continue;
+    seen.add(p.word_id);
+
+    const list = wordsByUnit.get(p.unit_id);
+    const item: UnitWord = {
+      word_id: word.id,
+      lemma: word.lemma,
+      lemma_normalized: word.lemma_normalized,
+      meaning_zh: meaning,
+    };
+    if (list) list.push(item);
+    else wordsByUnit.set(p.unit_id, [item]);
+  }
+
+  const out = new Map<string, UnitVocabulary>();
+  for (const unit of seedBundle.units) {
+    const words = wordsByUnit.get(unit.id);
+    // 一个词都没有的单元不进索引 —— 调用方据此 404，而不是拿空词表去求模型写题
+    if (!words || words.length === 0) continue;
+
+    const volume = volumeById.get(unit.volume_id);
+    const curriculum = volume ? curriculumById.get(volume.curriculum_id) : undefined;
+    const unit_label = [
+      curriculum?.display_name,
+      volume?.grade_label,
+      `${unit.unit_code}${unit.title_en ? ` ${unit.title_en}` : ""}`,
+    ]
+      .filter((part): part is string => Boolean(part && part.trim()))
+      .join(" · ");
+
+    out.set(unit.id, { unit_id: unit.id, unit_label, words });
+  }
+
+  return out;
+}
+
+/** 查不到返回 null —— 调用方必须当成真实失败（单元 id 拼错时**不要**回落到默认单元） */
+export function lookupUnitVocabulary(unitId: string): UnitVocabulary | null {
+  if (!unitIndex) unitIndex = buildUnitIndex();
+  return unitIndex.get(unitId) ?? null;
+}
+
+/** 知道有几个单元能出题，给自检用 */
+export function unitVocabularySize(): number {
+  if (!unitIndex) unitIndex = buildUnitIndex();
+  return unitIndex.size;
 }

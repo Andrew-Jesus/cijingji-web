@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { GENERIC_INTEREST_TAG, INTEREST_OPTIONS, interestLabelEn } from "@/lib/onboarding/questions";
-import { buildPrompt, isGenericInterest, type WordFacts } from "./prompt";
+import { buildPrompt, fixedPrefixLength, isGenericInterest, type WordFacts } from "./prompt";
 
 const facts: WordFacts = {
   lemma: "ancient",
@@ -110,5 +110,100 @@ describe("isGenericInterest", () => {
 
   it("真实兴趣 → false", () => {
     expect(isGenericInterest("music")).toBe(false);
+  });
+});
+
+/* ══════════════════════ 完形填空的提示词 ══════════════════════ */
+
+/**
+ * 这一组只测一件事，但它是省钱的关键：**system 前缀必须与具体单元无关。**
+ *
+ * 完形填空的变量部分是"单元名 + 51 个词"，每个单元都不一样。
+ * 如果这些东西漏进 system，缓存就永远命中不了 —— 而缓存命中率在账单上
+ * 差 30 倍（输入价 ¥1.5/百万 → ¥0.05/百万），在界面上却完全看不出来。
+ * 所以这条要用测试钉死，而不是靠"我记得别写进去"。
+ */
+const CLOZE_WORDS = [
+  {
+    word_id: "w:suppose",
+    lemma: "suppose",
+    lemma_normalized: "suppose",
+    meaning_zh: "猜想；认为",
+  },
+  {
+    word_id: "w:actress",
+    lemma: "actress",
+    lemma_normalized: "actress",
+    meaning_zh: "女演员",
+  },
+];
+
+describe("buildPrompt / 完形填空", () => {
+  const unitA = { unitLabel: "外研社版 · 八年级上册 · Unit 1 This is me", words: CLOZE_WORDS };
+  const unitB = {
+    unitLabel: "外研社版 · 九年级上册 · Unit 6 Problems",
+    words: [
+      {
+        word_id: "w:ancient",
+        lemma: "ancient",
+        lemma_normalized: "ancient",
+        meaning_zh: "古代的",
+      },
+    ],
+  };
+
+  it("换单元、换词表 → system 逐字相同（否则缓存永远不命中）", () => {
+    const a = buildPrompt("cloze_generate", unitA);
+    const b = buildPrompt("cloze_generate", unitB);
+    expect(a.fixed).toBe(b.fixed);
+  });
+
+  it("system 里不许出现具体的单元名或任何具体单词", () => {
+    const { fixed } = buildPrompt("cloze_generate", unitA);
+    expect(fixed).not.toContain("This is me");
+    expect(fixed).not.toContain("suppose");
+    expect(fixed).not.toContain("actress");
+  });
+
+  it("变量部分带上单元名与整份词表（含中文意思）", () => {
+    const { variable } = buildPrompt("cloze_generate", unitA);
+
+    expect(variable).toContain("Unit 1 This is me");
+    expect(variable).toContain("suppose");
+    expect(variable).toContain("猜想；认为");
+    expect(variable).toContain("actress");
+    expect(variable).toContain("2 个词");
+  });
+
+  it("不同单元的变量部分必须不同（不然模型拿到的是别人的词表）", () => {
+    const a = buildPrompt("cloze_generate", unitA);
+    const b = buildPrompt("cloze_generate", unitB);
+    expect(a.variable).not.toBe(b.variable);
+  });
+
+  it("system 里写清了三条不能省的约束", () => {
+    const { fixed } = buildPrompt("cloze_generate", unitA);
+    // ① 十个空
+    expect(fixed).toContain("正好 10 个");
+    // ② 四个选项要同词性不同词（否则变成语法题）
+    expect(fixed).toContain("同一词性的不同词");
+    // ③ 挖空词要写原形（否则回流到复习安排时对不上词）
+    expect(fixed).toContain("原形");
+  });
+
+  it("system 里明确禁了「真题 / 押题」这类说法", () => {
+    const { fixed } = buildPrompt("cloze_generate", unitA);
+    expect(fixed).toContain("真题");
+    expect(fixed).toContain("押题");
+  });
+
+  it("前缀够长 —— 短到几百字符的话，缓存省不下多少，说明结构有问题", () => {
+    expect(fixedPrefixLength("cloze_generate")).toBeGreaterThan(500);
+  });
+
+  it("两个任务的 system 不是同一个（复制粘贴忘记改的经典事故）", () => {
+    expect(buildPrompt("example_personalized", { facts, interestTag: "music" }).fixed).not.toBe(
+      buildPrompt("cloze_generate", unitA).fixed,
+    );
   });
 });

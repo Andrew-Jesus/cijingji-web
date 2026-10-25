@@ -147,6 +147,22 @@ async function runSync(reason: SyncReason): Promise<SyncResult> {
     pushed += exampleDelta.pushed;
     pulled += exampleDelta.pulled;
 
+    /**
+     * `word_states` 与 `cloze_sets` **刻意不在这里**。
+     *
+     * 两张都是"读时能自己长回来"的东西：
+     *   · `word_states` 从 `review_logs` 重放（见 `studyRepo.loadWordMemories`）；
+     *   · `cloze_sets` 没有就重新出一套（用户等一次生成而已）。
+     *
+     * 同步它们不但没有收益，还会制造麻烦：
+     *   · 记忆状态同步会造出"两台设备各推一步、合并取谁都是篡改算法输入"的无解冲突
+     *     （详见 `lib/db/types.ts` 里 `WordMemory` 的注释）；
+     *   · 完形填空是**缓存**而不是事实，把 A 设备缓存的题同步到 B 设备，
+     *     不如让 B 自己生成一套（还省一次跨设备的数据搬运）。
+     *
+     * 所以「这里没看到这两张表」是设计，不是漏了。
+     */
+
     return { status: "ok", reason, claimed, pushed, pulled };
   } catch (error) {
     // 静默失败：界面不显示、不打断用户。下一轮同步会再试一次（全量，天然可重试）。

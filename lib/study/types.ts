@@ -26,17 +26,37 @@ export type StudyAnswer =
  *   - `meaning`   看英选中的意思选错了 —— 释义记混了
  *   - `spelling`  中译英拼错了 —— 记住了词但写不对
  *   - `confusion` 中译英拼成了**词库里另一个真实的词** —— 这是"两个词混了"，比拼错严重
+ *   - `context`   完形填空里那个空选错了 —— **在句子里没认出这个词**
  *
  * 为什么 `confusion` 要单独存在：它和 `spelling` 的补救方式完全不同
  * （拼错要练拼写，弄混要拉词对做对比）。只记"错了"是浪费这张表。
+ *
+ * 为什么 `context` 要跟 `meaning` 分开（2026-10-25 加）：这两种错**看起来都是"选错了"，
+ * 但事实不同**。`meaning` 是孤立看这个词时就没记住意思；`context` 是单词卡上认得，
+ * 放进一句话里就不认识了 —— 后者恰恰是更接近真实阅读的那种难，补救方式也不一样
+ * （一个要对照辨析，一个要回到句子里读）。混成一类，归因就会一直指向错的地方。
  */
-export type ErrorType = "meaning" | "spelling" | "confusion";
+export type ErrorType = "meaning" | "spelling" | "confusion" | "context";
 
 export interface GradeResult {
   is_correct: boolean;
   /** 答对时为 null —— 没有错因可言 */
   error_type: ErrorType | null;
 }
+
+/**
+ * 记进 `review_logs.mode` 的题型。
+ *
+ * 比 `StudyMode` 多一个 `cloze`：完形填空是一件**要计进复习安排**的作答
+ * （用户明确选了这个），但它不是学习页那种"一张卡"的模板 ——
+ * 它有自己的页面、自己的拆题与判分。
+ *
+ * 分开写而不是往 `StudyMode` 里塞：`StudyMode` 的用途是"卡片模板"
+ * （`cards.ts` 按它决定出什么题、`mnemonic.ts` 按它挑说话方式）。
+ * 往里加一个没有对应模板的值，等于给那两个地方各埋一个 `undefined` 分支 ——
+ * 它们都是 `Record<StudyMode, ...>` 的穷举表，加进去就得硬编一份假数据。
+ */
+export type ReviewMode = StudyMode | "cloze";
 
 /**
  * 三级反馈。**数值直接写进 `review_logs.rating`**，与 FSRS 的 1/2/3/4 体系对齐
@@ -70,7 +90,8 @@ export interface StudyCard {
 export interface ReviewRecord {
   word_id: string;
   session_id: string;
-  mode: StudyMode;
+  /** 题型。**完形填空是 `"cloze"`** —— 见 `ReviewMode` */
+  mode: ReviewMode;
   is_correct: boolean;
   latency_ms: number;
   hesitation_count: number;

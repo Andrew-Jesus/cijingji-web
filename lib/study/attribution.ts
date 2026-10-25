@@ -128,10 +128,22 @@ export interface AggregateOptions {
   minSlowSamples?: number;
 }
 
-const ERROR_TYPES: readonly ErrorType[] = ["meaning", "spelling", "confusion"];
+/**
+ * 全部错因，**固定顺序**（`stubborn.kinds` 按它的顺序过滤，保证同一份输入两次调用
+ * 得到同一个数组 —— 否则同一份数据刷新两次，界面上的顺序会变）。
+ *
+ * ⚠️ 这个数组与下面的 `isErrorType` 是**手写的字面量**，TS **不会**因为
+ * `ErrorType` 加了新值而报错。2026-10-25 加 `context` 时就是这样：
+ * 三个 `Record<ErrorType, ...>` 当场编译失败，而这两处一声不吭 ——
+ * 结果会是"新错因永远统计不到"，界面照旧正常，只是数字少了一块。
+ * 加错因时请把这两处一起改（`ERROR_TYPE_LABEL` 与 `REMEDY` 也在同一批里）。
+ */
+const ERROR_TYPES: readonly ErrorType[] = ["meaning", "spelling", "confusion", "context"];
 
 function isErrorType(value: unknown): value is ErrorType {
-  return value === "meaning" || value === "spelling" || value === "confusion";
+  return (
+    value === "meaning" || value === "spelling" || value === "confusion" || value === "context"
+  );
 }
 
 /** 把可能是 `NaN` / 负数的耗时归到可计算的范围；不可用的返回 `null` */
@@ -177,7 +189,7 @@ export function aggregateErrors(
   const limit = Math.max(options.limit ?? DEFAULT_LIMIT, 0);
   const minSlowSamples = Math.max(options.minSlowSamples ?? DEFAULT_MIN_SLOW_SAMPLES, 1);
 
-  const counts: Record<ErrorType, number> = { meaning: 0, spelling: 0, confusion: 0 };
+  const counts: Record<ErrorType, number> = { meaning: 0, spelling: 0, confusion: 0, context: 0 };
   const perWord = new Map<string, WordAccumulator>();
 
   let total = 0;
@@ -241,6 +253,7 @@ export function aggregateErrors(
     meaning: { count: counts.meaning, share: share(counts.meaning) },
     spelling: { count: counts.spelling, share: share(counts.spelling) },
     confusion: { count: counts.confusion, share: share(counts.confusion) },
+    context: { count: counts.context, share: share(counts.context) },
   };
 
   const stubborn: StubbornWord[] = [];
@@ -322,6 +335,12 @@ export const REMEDY: Record<ErrorType, string> = {
   meaning: "把意思相近的几个词摆在一起对照一遍，看差别在哪",
   spelling: "按读音分段默写一遍，写的时候出声念",
   confusion: "把混的两个词记成一对，连着它们的例句一起看",
+  /**
+   * 完形填空错的那一类。**补救方式刻意不是"再背一遍释义"** ——
+   * 这个错说明的恰恰是"单独看它认得、放进句子就不认得"，
+   * 所以该做的是把那个词放回句子里读一遍，而不是回到单词卡上。
+   */
+  context: "把错的那个词放回原句里读两遍，先猜再看答案，别急着查词典",
 };
 
 export function remedyFor(type: ErrorType): string {

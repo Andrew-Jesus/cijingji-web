@@ -369,15 +369,35 @@ describe("topErrorType / 挑最该补的一类", () => {
   });
 });
 
-describe("remedyFor / 三种错因三种补救", () => {
+describe("remedyFor / 每种错因一种补救", () => {
   it("每种错因都有话说，且互不相同", () => {
-    const texts = [remedyFor("meaning"), remedyFor("spelling"), remedyFor("confusion")];
+    const texts = [
+      remedyFor("meaning"),
+      remedyFor("spelling"),
+      remedyFor("confusion"),
+      remedyFor("context"),
+    ];
     for (const t of texts) expect(t.length).toBeGreaterThan(0);
-    expect(new Set(texts).size).toBe(3);
+    expect(new Set(texts).size).toBe(4);
   });
 
-  it("REMEDY 覆盖三种错因（不多不少）", () => {
-    expect(Object.keys(REMEDY).sort()).toEqual(["confusion", "meaning", "spelling"]);
+  it("REMEDY 覆盖全部错因（不多不少）", () => {
+    // 这条断言的价值在于"加了错因却忘了给补救" —— 那种情况下界面会显示
+    // 一句 `undefined`，而 TS 拦不住（REMEDY 是 Record，缺键会报错，
+    // 但反过来"多了一个已经废弃的键"它不管）
+    expect(Object.keys(REMEDY).sort()).toEqual([
+      "confusion",
+      "context",
+      "meaning",
+      "spelling",
+    ]);
+  });
+
+  it("完形的补救方式不能是「再背一遍释义」——那是 meaning 的做法", () => {
+    // 这一条是产品口径：`context` 说明的是"单独认得、句子里不认得"，
+    // 所以补救必须把他送回句子里
+    expect(remedyFor("context")).not.toBe(remedyFor("meaning"));
+    expect(remedyFor("context")).toContain("句");
   });
 });
 
