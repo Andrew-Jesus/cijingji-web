@@ -37,7 +37,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   // 与 globals.css 的 --color-page 保持一致（themeColor 只能是字面量，无法读 CSS 变量）
-  themeColor: "#f6f7f9",
+  themeColor: "#f6f3ea",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

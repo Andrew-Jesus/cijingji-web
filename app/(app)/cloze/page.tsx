@@ -374,7 +374,7 @@ function ClozeScreen({ unitId }: { unitId: string }) {
                   <button
                     type="button"
                     onClick={retry}
-                    className="bg-ink text-on-ink w-full rounded-md px-4 py-3 text-sm font-medium transition-opacity"
+                    className="bg-cta text-on-ink w-full rounded-full px-4 py-3 text-sm font-medium transition-opacity"
                   >
                     再做一遍
                   </button>
@@ -392,7 +392,7 @@ function ClozeScreen({ unitId }: { unitId: string }) {
                 type="button"
                 onClick={() => void submit()}
                 disabled={phase.kind === "checking"}
-                className="bg-ink text-on-ink w-full rounded-md px-4 py-3 text-sm font-medium transition-opacity disabled:opacity-50"
+                className="bg-cta text-on-ink w-full rounded-full px-4 py-3 text-sm font-medium transition-opacity disabled:opacity-50"
               >
                 {phase.kind === "checking" ? "正在对答案…" : "交卷"}
               </button>
@@ -414,7 +414,7 @@ function Hint({ text }: { text: string }) {
 
 function IdleCard({ onStart }: { onStart: () => void }) {
   return (
-    <section className="bg-feature rounded-lg px-6 pt-6 pb-5">
+    <section className="border-subtle bg-surface rounded-[26px] border px-6 pt-6 pb-5">
       <p className="text-secondary text-[11px] tracking-[0.08em]">这个单元还没出过题</p>
       <p className="text-primary mt-3 text-sm leading-relaxed">
         会按你这个单元的词汇表写一篇短文，挖十个空。
@@ -429,7 +429,7 @@ function IdleCard({ onStart }: { onStart: () => void }) {
       <button
         type="button"
         onClick={onStart}
-        className="bg-ink text-on-ink mt-5 w-full rounded-md px-4 py-3 text-sm font-medium transition-opacity"
+        className="bg-cta text-on-ink mt-5 w-full rounded-full px-4 py-3 text-sm font-medium transition-opacity"
       >
         出这一套
       </button>
@@ -621,7 +621,7 @@ function BlankMark({
 
 function ScoreCard({ grade, saveNote }: { grade: ClozeGrade; saveNote: string | null }) {
   return (
-    <section className="bg-feature rounded-lg px-6 pt-6 pb-5">
+    <section className="border-subtle bg-surface rounded-[26px] border px-6 pt-6 pb-5">
       <p className="text-secondary text-[11px] tracking-[0.08em]">这一套</p>
       <p className="text-brand-800 mt-3 flex items-baseline text-[2.75rem] leading-none font-medium tabular-nums">
         {grade.correct_count}

@@ -27,15 +27,22 @@
  * 三条视觉决定，改之前先看理由：
  *   ① **进度环 → 细进度线**。环是"柔"的（它是治愈系的表情），
  *      线是"准"的（它是仪表的表情）。同一件事，两种语气。
- *   ② **大数字用等宽字**（`font-mono` + `tabular-nums`）。这不是装饰：
- *      比例字在数字从 0 数到 20 的过程中，整行会左右抖；等宽字纹丝不动。
- *      动态一旦建立在会抖的基础上，就只剩"晃"，没有"动"。
+ *   ② **大数字防抖**：比例字在数字滚动时整行会左右抖 —— 先用 `tabular-nums`
+ *      压住，再给数字容器 `min-w-[2ch]` 兜住"一位数变两位数"的那一下。
+ *      （等宽字本身在苔径里退场了 —— Consolas 的代码感跟奶油纸不搭。）
  *   ③ **交错入场**（`data-stagger`）：六个块依次落位，间隔 55ms。
  *      一次性整块淡入读起来是"页面加载完了"；依次落位读起来是"它在上菜"。
  *
- * ⚠️ 底衬 `bg-feature` 从暖砂换成了极淡钢蓝 —— 这**推翻了 2026-10-02 的硬规则**，
- * 但那条规则的理由（"暖白页面上放冷色会发青"）随底色一起失效了。
- * 详见 globals.css 顶部那段说明，别只看结论。
+ * 2026-11-01（下午）·「苔径」换装：Andy 抛开旧设计重新提案（三方向高保真稿），
+ * 选定 A · 苔径 —— 把背单词从「任务」变成「每天来走一段的小径」。这一页随之三处：
+ *   ④ **主卡从底衬改成白卡描边**。奶油纸底上，白卡 + 1px 纸描边最"脆"；
+ *     底衬（bg-feature）退回它该在的地方：抽屉选中行与浮层。
+ *   ⑤ **进度条换成一条会染绿的小径**（HomeTrail）—— 整个方向的记忆点：
+ *     走过几个词，足迹就绿一节，终点插一面暖杏小旗。
+ *     技术上 `pathLength=100` 把路径归一化，dasharray 直接吃百分比，
+ *     进度变化时 transition 平滑生长 —— 不需要真的去量路径长度。
+ *   ⑥ **主按钮胶囊化**（rounded-full）：「圆」是这个方向的软；
+ *     极简化的减法（文字搬进「···」、页脚诚实行保留）全部沿用。
  * ════════════════════════════════════════════════════════════════
  */
 
@@ -374,6 +381,10 @@ export default function HomePage() {
       ? Math.min(100, Math.round((state.data.doneToday / state.data.perDay) * 100))
       : 0;
 
+  /** 小径的状态词 —— 配「会染绿的径」的一句人话，只在这一处用 */
+  const trailWord =
+    progressPct >= 100 ? "今天到了" : progressPct > 0 ? "在路上" : "还没出发";
+
   return (
     // pb-24 而不是 pb-12：左下角常驻着小词（44px 高 + 20px 边距），
     // 底部留白不够的话，滚到最后一行时球会压住文字。
@@ -396,7 +407,7 @@ export default function HomePage() {
       </header>
 
       {state.status === "loading" && (
-        <p className="text-tertiary py-20 text-center font-mono text-[11px] tracking-[0.12em]">
+        <p className="text-tertiary py-20 text-center text-[11px] tracking-[0.12em]">
           读取本机词库
         </p>
       )}
@@ -410,10 +421,12 @@ export default function HomePage() {
 
       {state.status === "ready" && (
         <div data-stagger className="flex flex-col gap-2.5">
-          {/* ① 主卡：今天的量。整页唯一的视觉重心 */}
-          <section className="bg-feature rounded-lg px-5 pt-5 pb-5">
+          {/* ① 主卡：今天的量。整页唯一的视觉重心。
+              苔径换装：白卡 + 1px 纸描边 + 大圆角（26px，比 rounded-lg 再大一档 ——
+              大面积上圆角会被视觉放大，主卡要有「一块圆润的纸」的轮廓）。 */}
+          <section className="border-subtle bg-surface rounded-[26px] border px-5 pt-5 pb-5">
             <div className="flex items-start justify-between gap-3">
-              <p className="text-secondary pt-1 font-mono text-[11px] tracking-[0.06em] tabular-nums">
+              <p className="text-secondary pt-1 text-[11px] tracking-[0.06em] tabular-nums">
                 {state.data.todayLabel}
               </p>
               {/* 时长入口做成一枚只有数字的方牌：它是"参数"，不是"步骤"。
@@ -426,7 +439,7 @@ export default function HomePage() {
                 onClick={() => setBudgetOpen((v) => !v)}
                 aria-expanded={budgetOpen}
                 aria-label={`这次 ${state.data.budgetMinutes} 分钟，点开调整`}
-                className={`ease-snap -mt-0.5 -mr-1 flex shrink-0 items-center gap-1 rounded-sm border px-2 py-1 font-mono text-[11px] tabular-nums transition-colors duration-140 ${
+                className={`ease-snap -mt-0.5 -mr-1 flex shrink-0 items-center gap-1 rounded-sm border px-2 py-1 text-[11px] tabular-nums transition-colors duration-140 ${
                   budgetOpen
                     ? "border-brand-600 text-brand-800 bg-surface"
                     : "border-strong/60 text-secondary hover:border-strong"
@@ -437,40 +450,34 @@ export default function HomePage() {
               </button>
             </div>
 
-            <p className="text-brand-800 mt-5 flex items-baseline gap-2 font-mono text-[4rem] leading-[0.8] font-medium tracking-[-0.05em]">
+            <p className="text-brand-800 mt-5 flex items-baseline gap-2 text-[4rem] leading-[0.8] font-semibold tracking-[-0.03em]">
               <CountUp value={state.data.perDay} />
               <span className="text-secondary font-sans text-[13px] leading-none font-normal tracking-normal">
                 个词
               </span>
             </p>
 
-            {/* 进度线：比进度环"准"。环是柔感的表情，线是仪表的表情。
-                ⚠️ 高度 3px、底色半透明那一版在真机上几乎看不见（截图里就是一条空白）——
-                指示器看不见，等于没有。**未完成那一截必须是实色的。** */}
-            <div
-              className="mt-6 flex items-center gap-3"
-              role="img"
-              aria-label={`今日进度：${state.data.doneToday} / ${state.data.perDay}`}
-            >
-              <div className="bg-strong h-1 flex-1 overflow-hidden rounded-full">
-                <div
-                  className="bg-brand-600 ease-soft h-full rounded-full transition-[width] duration-500"
-                  style={{ width: `${progressPct}%` }}
-                />
-              </div>
-              <span className="text-secondary shrink-0 font-mono text-[11px] tabular-nums">
-                {state.data.doneToday}/{state.data.perDay}
-              </span>
+            {/* 小径：苔径方向的记忆点。走过几个词，足迹绿一节；终点一面暖杏小旗。
+                取代了细进度线 —— 线是「准」，径是「走」，苔径要的是后者。
+                进度数字与读屏标注仍然在这里，信息量一点没少。 */}
+            <HomeTrail
+              pct={progressPct}
+              label={`今日进度：${state.data.doneToday} / ${state.data.perDay}`}
+            />
+            <div className="mt-1 flex items-baseline justify-between">
+              <p className="text-secondary text-[12px] tabular-nums">
+                今日 {state.data.doneToday} / {state.data.perDay}
+              </p>
+              <p className="text-brand-800 text-[12px] font-medium">{trailWord}</p>
             </div>
 
-            {/* 主按钮：深墨实体键，不是饱和蓝。
-                一整块 100% 宽的蓝，视觉重量压过整页所有内容 —— 页面会读成
-                "一个蓝按钮配了一点字"。深墨安静，但按下去有分量。
-                蓝色只剩两个落点（大数字、进度条），这就是"一屏一个彩色"。 */}
+            {/* 主按钮：深松绿实体键，胶囊形。
+                「深底白字 + 一整块宽」的分量感是上一轮定的，苔径只换了材料
+                （蓝 → 深松绿）并把四角磨圆 —— 形状变了，"安静但一按就有"没变。 */}
             <button
               type="button"
               onClick={() => router.push(`/study/${state.data.sessionId}`)}
-              className="bg-cta text-on-ink ease-snap mt-6 w-full rounded-md px-4 py-3.5 text-sm font-medium transition-[background-color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985]"
+              className="bg-cta text-on-ink ease-snap mt-6 w-full rounded-full px-4 py-3.5 text-sm font-medium transition-[background-color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985]"
             >
               {state.data.doneToday > 0 ? "继续" : "开始"}
             </button>
@@ -489,7 +496,7 @@ export default function HomePage() {
                       type="button"
                       onClick={() => pickBudget(m)}
                       aria-pressed={on}
-                      className={`ease-snap rounded-sm border py-2.5 text-center font-mono text-[11px] tabular-nums transition-colors duration-140 ${
+                      className={`ease-snap rounded-sm border py-2.5 text-center text-[11px] tabular-nums transition-colors duration-140 ${
                         on
                           ? "border-brand-600 bg-brand-50 text-brand-800 font-medium"
                           : "border-subtle text-secondary hover:border-strong"
@@ -527,7 +534,7 @@ export default function HomePage() {
                     }}
                     placeholder="15"
                     aria-label="自定义分钟数"
-                    className="border-subtle text-primary w-16 rounded-sm border px-2 py-1.5 font-mono text-[11px] tabular-nums"
+                    className="border-subtle text-primary w-16 rounded-sm border px-2 py-1.5 text-[11px] tabular-nums"
                   />
                   <span className="text-secondary text-[11px]">分钟</span>
                   <button
@@ -562,7 +569,7 @@ export default function HomePage() {
               <span className="text-secondary min-w-0 flex-1 truncate text-[11px] tracking-[0.04em]">
                 {state.data.unitLabel}
               </span>
-              <span className="text-tertiary flex shrink-0 items-center gap-1 font-mono text-[11px] tabular-nums">
+              <span className="text-tertiary flex shrink-0 items-center gap-1 text-[11px] tabular-nums">
                 {state.data.totalInUnit}
                 <ChevronRight />
               </span>
@@ -574,7 +581,7 @@ export default function HomePage() {
                   className="grid grid-cols-[minmax(0,6.75rem)_1fr] items-baseline gap-x-4 px-4 py-2.5"
                 >
                   {/* 英文词走等宽：它本来就是"一串字母"，等宽让首字母对齐成一条直线 */}
-                  <span className="text-primary truncate font-mono text-[13px]">{w.lemma}</span>
+                  <span className="text-primary truncate text-[13px]">{w.lemma}</span>
                   <span className="text-secondary truncate text-[12px]">{w.meaning_zh}</span>
                 </li>
               ))}
@@ -696,7 +703,11 @@ function CountUp({ value }: { value: number }) {
     return () => cancelAnimationFrame(raf);
   }, [value]);
 
-  return <>{shown}</>;
+  // min-w-[2ch]：一位数滚到两位数的那一下，容器宽度不动 —— 等宽字退场后，
+  // 比例字抖动的最后藏身处就在这里（见文件顶部注释 ②）。
+  return (
+    <span className="inline-block min-w-[2ch] text-left">{shown}</span>
+  );
 }
 
 /** 三个点 —— 「更多」的符号。手画，禁 emoji 是产品级约束 */
@@ -747,6 +758,59 @@ function ChevronRight() {
 }
 
 /**
+ * 首页那条「会染绿的小径」—— 苔径方向的记忆点。
+ *
+ * 进度不再是一根横条，而是一条 S 形的小路：走过的足迹是苔绿，
+ * 没走的是浅纸色，终点立着一面暖杏小旗。每天回来，路比昨天更绿一点。
+ *
+ * 实现上三件事：
+ *   · `pathLength={100}` 把路径**归一化**成 100 份 —— dasharray 直接写
+ *     百分比（`${pct} 100`），不用真的去量这条贝塞尔曲线有多长；
+ *   · pct 为 0 时不渲染足迹：长度为 0 的 dash 配 round 端帽，个别内核
+ *     会在起点画出一粒点，跟起点圆点叠成"一颗痣"；
+ *   · 颜色全部走语义类（stroke-brand-600 / fill-accent-600 ...），
+ *     "组件里不写死颜色"的老规矩在 SVG 里同样成立。
+ */
+function HomeTrail({ pct, label }: { pct: number; label: string }) {
+  return (
+    <svg
+      viewBox="0 0 320 78"
+      className="mt-6 block h-[78px] w-full"
+      role="img"
+      aria-label={label}
+    >
+      <path
+        d="M16 60 C 60 12, 108 70, 164 40 C 214 14, 262 50, 302 28"
+        fill="none"
+        strokeWidth="10"
+        strokeLinecap="round"
+        className="stroke-strong"
+      />
+      {pct > 0 && (
+        <path
+          d="M16 60 C 60 12, 108 70, 164 40 C 214 14, 262 50, 302 28"
+          fill="none"
+          strokeWidth="10"
+          strokeLinecap="round"
+          pathLength={100}
+          strokeDasharray={`${pct} 100`}
+          className="ease-soft stroke-brand-600 transition-[stroke-dasharray] duration-500"
+        />
+      )}
+      <circle cx="16" cy="60" r="6.5" className="fill-brand-600" />
+      <path
+        d="M302 28 L302 6"
+        fill="none"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        className="stroke-brand-800"
+      />
+      <path d="M302 6 L318 11 L302 16 Z" className="fill-accent-600" />
+    </svg>
+  );
+}
+
+/**
  * 「···」面板。从右上角展开，浮在内容之上。
  *
  * 里面装的全是**低频但必须可查**的东西：练习方式、四个参数、数据说明、改设置、退出。
@@ -778,18 +842,18 @@ function MoreSheet({
         className="fixed inset-0 z-30"
         onClick={onClose}
         aria-hidden
-        style={{ background: "rgb(22 26 34 / 0.26)" }}
+        style={{ background: "rgb(44 48 38 / 0.26)" }}
       />
       <div
         role="dialog"
         aria-label="更多"
         data-animated
         data-rise="down"
-        className="border-subtle bg-surface absolute top-16 right-5 z-40 max-h-[calc(100dvh-6rem)] w-[17.5rem] overflow-y-auto rounded-lg border p-4 shadow-[0_16px_40px_-20px_rgb(22_26_34/0.35)]"
+        className="border-subtle bg-surface absolute top-16 right-5 z-40 max-h-[calc(100dvh-6rem)] w-[17.5rem] overflow-y-auto rounded-lg border p-4 shadow-[0_16px_40px_-20px_rgb(44_48_38/0.32)]"
       >
         {summary && (
           <>
-            <p className="text-tertiary font-mono text-[10px] tracking-[0.14em]">会怎么练</p>
+            <p className="text-tertiary text-[10px] tracking-[0.14em]">会怎么练</p>
             <p className="text-secondary mt-2 text-[12px] leading-relaxed">{summary}</p>
             <dl className="border-subtle mt-3 space-y-1.5 border-t pt-3">
               {plan.map((row) => (
@@ -814,7 +878,7 @@ function MoreSheet({
             ⚠️ 别改成默认展开：一展开，这个面板就又变成改版前那个"两段说明"。 */}
         <details className="border-subtle group mt-3 border-t pt-3">
           <summary className="ease-snap flex cursor-pointer list-none items-baseline justify-between gap-2 transition-colors duration-140 [&::-webkit-details-marker]:hidden">
-            <span className="text-tertiary font-mono text-[10px] tracking-[0.14em]">数据说明</span>
+            <span className="text-tertiary text-[10px] tracking-[0.14em]">数据说明</span>
             <span className="text-tertiary flex items-center gap-1 text-[10px] group-open:hidden">
               三册逐条核过
               <ChevronDown />

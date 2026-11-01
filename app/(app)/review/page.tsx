@@ -161,7 +161,7 @@ export default function ReviewPage() {
           </div>
 
           {/* 主卡：这段时间的总体量。数字先给，说明跟在后面 */}
-          <section className="bg-feature rounded-lg px-6 pt-6 pb-5">
+          <section className="border-subtle bg-surface rounded-[26px] border px-6 pt-6 pb-5">
             <p className="text-secondary text-[11px] tracking-[0.08em]">最近 {days} 天</p>
             <p className="text-brand-800 mt-3 flex items-baseline text-[2.75rem] leading-none font-medium tabular-nums">
               {attribution.total}

@@ -734,7 +734,7 @@ export default function StudyPage() {
             />
           </div>
         </div>
-        <p className="text-tertiary shrink-0 font-mono text-[11px] tabular-nums">
+        <p className="text-tertiary shrink-0 text-[11px] tabular-nums">
           {progress.done}
           <span className="text-tertiary/60"> / {progress.total}</span>
         </p>
@@ -917,7 +917,7 @@ function CardView({
                 type="button"
                 disabled={text.trim().length === 0}
                 onClick={onSubmit}
-                className="bg-cta text-on-ink ease-snap w-full rounded-md border border-transparent px-4 py-3 text-sm font-medium transition-[background-color,border-color,color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985] disabled:border-subtle disabled:bg-surface disabled:text-tertiary"
+                className="bg-cta text-on-ink ease-snap w-full rounded-full border border-transparent px-4 py-3 text-sm font-medium transition-[background-color,border-color,color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985] disabled:border-subtle disabled:bg-surface disabled:text-tertiary"
               >
                 确认
               </button>
@@ -963,7 +963,7 @@ function CardView({
             type="button"
             disabled={selected === null}
             onClick={onSubmit}
-            className="bg-cta text-on-ink ease-snap mt-3 w-full rounded-md border border-transparent px-4 py-3 text-sm font-medium transition-[background-color,border-color,color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985] disabled:border-subtle disabled:bg-surface disabled:text-tertiary"
+            className="bg-cta text-on-ink ease-snap mt-3 w-full rounded-full border border-transparent px-4 py-3 text-sm font-medium transition-[background-color,border-color,color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985] disabled:border-subtle disabled:bg-surface disabled:text-tertiary"
           >
             确认
           </button>
@@ -1222,7 +1222,7 @@ function FinishedView({
       </header>
 
       {/* 主卡：一次就对几个。整页的重心 */}
-      <section className="bg-feature rounded-lg px-6 pt-6 pb-5">
+      <section className="border-subtle bg-surface rounded-[26px] border px-6 pt-6 pb-5">
         <p className="text-secondary text-[11px] tracking-[0.08em]">一次就认出来的</p>
         <p className="text-brand-800 mt-3 flex items-baseline text-[2.75rem] leading-none font-medium tabular-nums">
           {summary.correct}
@@ -1230,7 +1230,7 @@ function FinishedView({
         </p>
         <p className="text-secondary mt-3 text-xs">用时约 {formatElapsed(summary.elapsed_ms)}</p>
         <p className="text-secondary border-strong/60 mt-5 border-t pt-4 text-xs leading-relaxed">
-          共作答 <span className="text-primary font-mono tabular-nums">{summary.attempts}</span> 次
+          共作答 <span className="text-primary tabular-nums">{summary.attempts}</span> 次
           {/* 只在真的重复过时才解释。全对一次过的话，这句解释是在回答一个没人问的问题 ——
               而这屏上一个字都嫌多。 */}
           {summary.attempts > summary.total && (
@@ -1358,7 +1358,7 @@ function FinishedView({
       <button
         type="button"
         onClick={() => router.push("/")}
-        className="bg-cta text-on-ink ease-snap w-full rounded-md px-4 py-3.5 text-sm transition-[background-color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985]"
+        className="bg-cta text-on-ink ease-snap w-full rounded-full px-4 py-3.5 text-sm transition-[background-color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985]"
       >
         回首页
       </button>
