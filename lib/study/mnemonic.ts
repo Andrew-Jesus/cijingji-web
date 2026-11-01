@@ -111,5 +111,10 @@ export function mnemonicFor(card: StudyCard): MnemonicTip {
  * 抽屉的展开按钮文案。
  * 单独一个函数是为了让"这东西存在"这件事在数据层面可见 ——
  * 界面上永远要有一个入口，而不是藏起来当它不存在（用户会以为这产品就是没有助记）。
+ *
+ * 2026-11-01 从「记忆法 / 写不出来怎么办」缩成「记忆法」：
+ * 展开后第一行本来就是「写不出来时怎么办」（见上面 `tip.title`），
+ * 按钮把它念一遍，等于门口挂个牌子写着屋里有张同样的牌子。
+ * 靠"写不出来怎么办"这四个字招人的活，交给展开后的内容去做。
  */
-export const MNEMONIC_TRIGGER_LABEL = "记忆法 / 写不出来怎么办";
+export const MNEMONIC_TRIGGER_LABEL = "记忆法";

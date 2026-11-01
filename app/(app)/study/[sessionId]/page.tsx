@@ -69,7 +69,13 @@ import { buildKnownLemmaSet, buildStudyCards } from "@/lib/study/cards";
 import { examplePacingDelayMs } from "@/lib/study/examplePacing";
 import { errorTypeLabel, gradeAnswer } from "@/lib/study/grade";
 import { MNEMONIC_TRIGGER_LABEL, mnemonicFor } from "@/lib/study/mnemonic";
-import { RATING_FOOTNOTE, RATING_OPTIONS, defaultRating, ratingHint } from "@/lib/study/rating";
+import {
+  RATING_FOOTNOTE,
+  RATING_OPTIONS,
+  defaultRating,
+  ratingForKey,
+  ratingHint,
+} from "@/lib/study/rating";
 import {
   advance,
   buildQueue,
@@ -187,6 +193,23 @@ export default function StudyPage() {
 
   const current = queue[pos] ?? null;
   const card = current?.card ?? null;
+
+  /*
+    请左下角那颗 44px 的小词退成小点 —— **整个学习页**都要这么做。
+
+    真机上抓到的：答完揭示答案后，三级反馈最下面那行脚注被球压掉了一半。
+    它不是"位置没留够"（Shell 已有 pb-20），球是 fixed 的，
+    滚到哪儿压到哪儿，只能让它让开。
+
+    ⚠️ 只能在这一层设一次。结算页（FinishedView）原来自己设了一遍，
+    两处各设各的会打架：结算页卸载时把自己那份恢复成 false，
+    而学习页其实还开着 —— 球就这么莫名其妙地弹回来了。
+    状态归最外层管，谁渲染谁不管。
+  */
+  useEffect(() => {
+    requestQuiet(true);
+    return () => requestQuiet(false);
+  }, []);
 
   // ------------------------------------------------------------------ 装载
 
@@ -697,20 +720,23 @@ export default function StudyPage() {
         <button
           type="button"
           onClick={() => router.push("/")}
-          className="text-tertiary -ml-2 shrink-0 px-2 py-1 text-xs underline-offset-4 hover:underline"
+          className="text-tertiary hover:text-secondary ease-snap -ml-2 shrink-0 px-2 py-1 text-[11px] transition-colors duration-140"
         >
           先到这儿
         </button>
+        {/* 进度线跟首页同一规格（h-1 + 实色 strong）：
+            两边都是"今天走多少了"，长得不一样会让人以为是两件事。 */}
         <div className="min-w-0 flex-1">
-          <div className="bg-sunken h-1.5 overflow-hidden rounded-full">
+          <div className="bg-strong/70 h-1 overflow-hidden rounded-full">
             <div
               className="bg-brand-600 ease-soft h-full rounded-full transition-[width] duration-240"
               style={{ width: `${progress.total > 0 ? (progress.done / progress.total) * 100 : 0}%` }}
             />
           </div>
         </div>
-        <p className="text-tertiary shrink-0 text-[11px] tabular-nums">
-          {progress.done} / {progress.total}
+        <p className="text-tertiary shrink-0 font-mono text-[11px] tabular-nums">
+          {progress.done}
+          <span className="text-tertiary/60"> / {progress.total}</span>
         </p>
       </header>
 
@@ -721,7 +747,18 @@ export default function StudyPage() {
       )}
 
       {card && (
-        <div key={`${card.word_id}-${current?.round ?? 0}`} data-animated className="flex flex-col gap-3">
+        /*
+          flex-1 + justify-center：把卡片放在 header 以下的剩余空间**正中**。
+          答题时上下留白对称，卡片像一块摆在台面的板子；
+          答完答案块接上来，容器被撑高，居中自动失效、回到从顶往下排 ——
+          正好是"面板展开后正常滚动"，不用写任何分支。
+          （flex item 的 min-height 默认是 auto，内容比容器高时能自己撑开，不会把顶部裁掉。）
+        */
+        <div
+          key={`${card.word_id}-${current?.round ?? 0}`}
+          data-animated
+          className="flex flex-1 flex-col justify-center gap-3"
+        >
           <CardView
             card={card}
             round={current?.round ?? 0}
@@ -763,6 +800,9 @@ function Shell({ children }: { children: ReactNode }) {
   );
 }
 
+/** 结算页「今天卡住的」最多列几个 —— 够看清今天是什么状况就行，不搬整张错词表 */
+const STUCK_PREVIEW = 8;
+
 const MODE_LABEL: Record<string, string> = {
   recognize: "看英选中",
   recall_spell: "中译英",
@@ -799,7 +839,20 @@ function CardView({
   const isSpell = card.mode === "recall_spell";
 
   return (
-    <section className="border-subtle bg-surface rounded-lg border p-6">
+    /*
+      ⚠️ 卡片的高度：试过两版，记下来免得再走一遍
+
+      第一版（原样）：卡片高度跟着内容走 → 390×844 实测只占 35%，下面 2/3 是一片白。
+      第二版（撑满）：给 min-h 让卡片占满一屏、内容垂直居中 →
+        卡片确实占到了 79%，**但一个字悬在 280px 空白中间更难看** ——
+        拼写题只有「释义 + 输入框」两行东西，撑得越大，中间那行越孤。
+
+      **根子上的错**：以为空白是卡片太小造成的。其实一屏只有一个词，
+      内容就该这么点，问题只在"它落在屏幕的哪个位置"。
+      所以卡片回到自然高度，由外层把它**放在剩余空间的中间**（见下面 Shell 那层），
+      上下留白对称、卡片是一整块贴合的板子 —— 这才是"面板"，不是"被拉长的板子"。
+    */
+    <section className="border-subtle bg-surface flex flex-col rounded-lg border p-6">
       <div className="flex items-baseline justify-between gap-3">
         <p className="text-tertiary text-[11px] tracking-[0.08em]">
           {card.unit_code} · {MODE_LABEL[card.mode] ?? card.mode}
@@ -809,104 +862,113 @@ function CardView({
         )}
       </div>
 
-      {isSpell ? (
-        <>
-          <p className="text-primary mt-4 text-2xl leading-snug font-medium">{card.meaning_zh}</p>
-          {card.pos && <p className="text-tertiary mt-1.5 text-xs">{card.pos}</p>}
-          {/* 「或短语」不是凑字：词表里收了 take part in 这类短语，题干说只写单词会让人猛一下 */}
-          <p className="text-tertiary mt-4 text-xs">写出对应的英文单词或短语</p>
-        </>
-      ) : (
-        <>
-          <p className="text-primary mt-4 text-[2rem] leading-tight font-medium break-words">
-            {card.lemma}
+      <div className="py-5">
+        {isSpell ? (
+          <>
+            <p className="text-primary text-2xl leading-snug font-medium">{card.meaning_zh}</p>
+            {card.pos && <p className="text-tertiary mt-1.5 text-xs">{card.pos}</p>}
+            {/* 「或短语」不是凑字：词表里收了 take part in 这类短语，题干说只写单词会让人猛一下 */}
+            <p className="text-tertiary mt-4 text-xs">写出对应的英文单词或短语</p>
+          </>
+        ) : (
+          <>
+            <p className="text-primary text-[2rem] leading-tight font-medium break-words">
+              {card.lemma}
+            </p>
+            {card.phonetic_uk && <p className="text-secondary mt-1.5 text-sm">{card.phonetic_uk}</p>}
+            {/* 这里原来有一行「它的意思是？」。
+                删掉的理由：卡片顶部已经写着「看英选中」，下面四个选项全是中文 ——
+                题干在替读者说出他三秒内就知道的事。**极简不是把字改小，是把不用读的字拿走。**
+                无障碍不跟着丢：指令改挂在列表的 aria-label 上，屏幕阅读器照样会读到。 */}
+          </>
+        )}
+
+        {/* 硬约束 12：置信度低于 0.8 必须标注"可能不准" */}
+        {card.confidence < 0.8 && (
+          <p className="text-tertiary mt-3 text-[11px] leading-relaxed">
+            这一条还没经过人工核对，可能不准 —— 觉得不对随时告诉我。
           </p>
-          {card.phonetic_uk && <p className="text-secondary mt-1.5 text-sm">{card.phonetic_uk}</p>}
-          <p className="text-tertiary mt-4 text-xs">它的意思是？</p>
-        </>
-      )}
+        )}
+      </div>
 
-      {/* 硬约束 12：置信度低于 0.8 必须标注"可能不准" */}
-      {card.confidence < 0.8 && (
-        <p className="text-tertiary mt-3 text-[11px] leading-relaxed">
-          这一条还没经过人工核对，可能不准 —— 觉得不对随时告诉我。
-        </p>
-      )}
+      {/* 底部操作区：输入框 / 选项 + 确认键。它在卡片里是最后一块，
+          所以未作答时会被中间的 flex-1 顶到底边 —— 拇指正好落在那儿。 */}
+      <div>
+        {isSpell ? (
+          <div className="space-y-3">
+            <input
+              value={text}
+              disabled={revealed}
+              onChange={(e) => onText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onSubmit();
+              }}
+              autoCapitalize="none"
+              autoCorrect="off"
+              autoComplete="off"
+              spellCheck={false}
+              enterKeyHint="done"
+              placeholder="在这里写"
+              aria-label="输入英文单词或短语"
+              className="border-subtle bg-page text-primary placeholder:text-tertiary focus:border-brand-600 w-full rounded-md border px-3.5 py-3 text-base tracking-wide outline-none disabled:opacity-70"
+            />
+            {!revealed && (
+              <button
+                type="button"
+                disabled={text.trim().length === 0}
+                onClick={onSubmit}
+                className="bg-cta text-on-ink ease-snap w-full rounded-md border border-transparent px-4 py-3 text-sm font-medium transition-[background-color,border-color,color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985] disabled:border-subtle disabled:bg-surface disabled:text-tertiary"
+              >
+                确认
+              </button>
+            )}
+          </div>
+        ) : (
+          <ul className="space-y-2" aria-label="选出它的意思">
+            {(card.options ?? []).map((option, i) => {
+              const isPicked = selected === i;
+              const isAnswer = card.answer_index === i;
 
-      {isSpell ? (
-        <div className="mt-4 space-y-3">
-          <input
-            value={text}
-            disabled={revealed}
-            onChange={(e) => onText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") onSubmit();
-            }}
-            autoCapitalize="none"
-            autoCorrect="off"
-            autoComplete="off"
-            spellCheck={false}
-            enterKeyHint="done"
-            placeholder="在这里写"
-            aria-label="输入英文单词或短语"
-            className="border-subtle bg-page text-primary placeholder:text-tertiary focus:border-brand-600 w-full rounded-md border px-3.5 py-3 text-base tracking-wide outline-none disabled:opacity-70"
-          />
-          {!revealed && (
-            <button
-              type="button"
-              disabled={text.trim().length === 0}
-              onClick={onSubmit}
-              className="bg-cta text-on-ink ease-snap w-full rounded-md border border-transparent px-4 py-3 text-sm font-medium transition-[background-color,border-color,color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985] disabled:border-subtle disabled:bg-surface disabled:text-tertiary"
-            >
-              确认
-            </button>
-          )}
-        </div>
-      ) : (
-        <ul className="mt-4 space-y-2.5">
-          {(card.options ?? []).map((option, i) => {
-            const isPicked = selected === i;
-            const isAnswer = card.answer_index === i;
+              // 三态：未揭示时"选中"用主色；揭示后正确项用成功色、选错的那项用危险色。
+              // **不只靠颜色**——每一项旁边还有"正确 / 你选的"文字标记，色弱用户也分得清。
+              let tone = "border-subtle bg-surface hover:border-strong";
+              if (!revealed && isPicked) tone = "border-brand-600 bg-brand-50";
+              if (revealed && isAnswer) tone = "border-success-600 bg-success-50";
+              if (revealed && isPicked && !isAnswer) tone = "border-danger-600 bg-danger-50";
 
-            // 三态：未揭示时"选中"用主色；揭示后正确项用成功色、选错的那项用危险色。
-            // **不只靠颜色**——每一项旁边还有"正确 / 你选的"文字标记，色弱用户也分得清。
-            let tone = "border-subtle bg-surface hover:border-strong";
-            if (!revealed && isPicked) tone = "border-brand-600 bg-brand-50";
-            if (revealed && isAnswer) tone = "border-success-600 bg-success-50";
-            if (revealed && isPicked && !isAnswer) tone = "border-danger-600 bg-danger-50";
+              return (
+                <li key={option}>
+                  <button
+                    type="button"
+                    disabled={revealed}
+                    onClick={() => onPick(i)}
+                    className={`ease-soft flex w-full items-start justify-between gap-3 rounded-md border px-4 py-3.5 text-left transition-[background-color,border-color] duration-200 ${tone}`}
+                  >
+                    <span className="text-primary min-w-0 text-sm leading-snug">{option}</span>
+                    {revealed && isAnswer && (
+                      <span className="text-success-600 shrink-0 text-[11px]">正确</span>
+                    )}
+                    {revealed && isPicked && !isAnswer && (
+                      <span className="text-danger-600 shrink-0 text-[11px]">你选的</span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
 
-            return (
-              <li key={option}>
-                <button
-                  type="button"
-                  disabled={revealed}
-                  onClick={() => onPick(i)}
-                  className={`ease-soft flex w-full items-start justify-between gap-3 rounded-md border px-4 py-3.5 text-left transition-[background-color,border-color] duration-200 ${tone}`}
-                >
-                  <span className="text-primary min-w-0 text-sm leading-snug">{option}</span>
-                  {revealed && isAnswer && (
-                    <span className="text-success-600 shrink-0 text-[11px]">正确</span>
-                  )}
-                  {revealed && isPicked && !isAnswer && (
-                    <span className="text-danger-600 shrink-0 text-[11px]">你选的</span>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {!revealed && !isSpell && (
-        <button
-          type="button"
-          disabled={selected === null}
-          onClick={onSubmit}
-          className="bg-cta text-on-ink ease-snap mt-4 w-full rounded-md border border-transparent px-4 py-3 text-sm font-medium transition-[background-color,border-color,color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985] disabled:border-subtle disabled:bg-surface disabled:text-tertiary"
-        >
-          确认
-        </button>
-      )}
+        {!revealed && !isSpell && (
+          <button
+            type="button"
+            disabled={selected === null}
+            onClick={onSubmit}
+            className="bg-cta text-on-ink ease-snap mt-3 w-full rounded-md border border-transparent px-4 py-3 text-sm font-medium transition-[background-color,border-color,color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985] disabled:border-subtle disabled:bg-surface disabled:text-tertiary"
+          >
+            确认
+          </button>
+        )}
+      </div>
     </section>
   );
 }
@@ -968,7 +1030,9 @@ function RevealView({
           <p className="text-tertiary text-[11px]">{errorTypeLabel(grade.error_type)}</p>
         )}
       </div>
-      {!grade.is_correct && (
+      {/* 只有拼写题需要单独报答案 —— 选择题答错时正确项上已经带着「正确」标记，
+          再把同一个词念一遍，是把同一件事说两次。 */}
+      {!grade.is_correct && card.mode === "recall_spell" && (
         <p className="text-primary mt-2 text-sm leading-relaxed">
           正确答案：
           <span className="font-medium">{correctTextOf(card)}</span>
@@ -986,7 +1050,7 @@ function RevealView({
         </div>
 
         {exampleLoading && !example && (
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex items-center gap-2" role="status">
             {/* 三个小点依次呼吸。动效来自 .example-dot（只动 opacity/scale），
                 在「减少动态效果」偏好下会自动停住 —— 见 globals.css。
                 它只是让这 1 秒**看得出是在做事**，不代表进度，所以不写百分比。 */}
@@ -995,7 +1059,9 @@ function RevealView({
               <span className="example-dot bg-brand-400 size-1.5 rounded-full" />
               <span className="example-dot bg-brand-400 size-1.5 rounded-full" />
             </span>
-            <p className="text-tertiary text-xs">正在按你选的兴趣写一句…</p>
+            {/* 原来写的是「正在按你选的兴趣写一句…」——
+                兴趣就写在上面那行标签里，这句话一半是重复的。 */}
+            <p className="text-tertiary text-xs">正在写一句</p>
           </div>
         )}
 
@@ -1043,15 +1109,62 @@ function RevealView({
         )}
       </div>
 
-      {/* ③ 记忆法抽屉 —— 默认收起。阶段 0 是通用练习建议，不编词源 */}
+      {/* ③ 三级反馈 —— 三档都真的写进 review_logs.rating
+          **必做的排前面**：每张卡都要评一次级，而记忆法是少数情况才点的。
+          改版前记忆法挡在这一块上面，等于把"选做"摆在了"必做"前面。 */}
+      <div className="border-subtle mt-4 border-t pt-4">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="text-tertiary text-[11px] tracking-[0.08em]">刚才想起来了吗</p>
+          {/* 原来这里写的是「（已经替你预选了「一眼就认出来了」那一档）」，
+              两个毛病：
+                ① 半句话塞进标题，标题读起来喘不上气；
+                ② **拿 hint 当档名** —— 按钮上写「很顺」，括号里却说「一眼就认出来了」
+                   （那是按钮下面那行小字的原文），用户得自己把两句对上。
+              现在直接说预选框的名字，一个字都不用猜。 */}
+          <p className="text-tertiary shrink-0 text-[11px]">默认「{ratingForKey(preset).label}」</p>
+        </div>
+        <div className="mt-3 space-y-2">
+          {RATING_OPTIONS.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => onRate(option.rating)}
+              className={`ease-snap w-full rounded-md border px-4 py-3 text-left transition-[background-color,border-color] duration-140 active:scale-[0.99] ${
+                option.rating === preset
+                  ? "border-cta bg-surface"
+                  : "border-subtle bg-surface hover:border-strong"
+              }`}
+            >
+              <span
+                className={`block text-sm leading-snug ${
+                  option.rating === preset ? "text-primary font-medium" : "text-primary"
+                }`}
+              >
+                {option.label}
+              </span>
+              <span className="text-tertiary mt-0.5 block text-[11px] leading-snug">
+                {ratingHint(option, grade.is_correct)}
+              </span>
+            </button>
+          ))}
+        </div>
+        <p className="text-tertiary mt-2.5 text-[11px] leading-relaxed">{RATING_FOOTNOTE}</p>
+      </div>
+
+      {/* ④ 记忆法抽屉 —— 默认收起。阶段 0 是通用练习建议，不编词源。
+          长相跟首页「数据说明」一致（左边名字、右边「展开」）——
+          全站只教一种折叠方式，用户学会一次就到处能用。 */}
       <div className="border-subtle mt-4 border-t pt-3">
         <button
           type="button"
           onClick={() => setShowMnemonic((v) => !v)}
           aria-expanded={showMnemonic}
-          className="text-secondary text-xs underline-offset-4 hover:underline"
+          className="flex w-full items-baseline justify-between gap-3"
         >
-          {showMnemonic ? "收起" : MNEMONIC_TRIGGER_LABEL}
+          <span className="text-secondary text-xs">{MNEMONIC_TRIGGER_LABEL}</span>
+          <span className="text-tertiary shrink-0 text-[11px] underline underline-offset-4">
+            {showMnemonic ? "收起" : "展开"}
+          </span>
         </button>
         {showMnemonic && (
           <div data-animated className="mt-2.5">
@@ -1066,36 +1179,6 @@ function RevealView({
             <p className="text-tertiary mt-2.5 text-[11px] leading-relaxed">{tip.note}</p>
           </div>
         )}
-      </div>
-
-      {/* ④ 三级反馈 —— 三档都真的写进 review_logs.rating */}
-      <div className="border-subtle mt-4 border-t pt-4">
-        <p className="text-tertiary text-[11px] tracking-[0.08em]">
-          刚才想起来了吗？（已经替你预选了「{ratingHint(
-            RATING_OPTIONS.find((o) => o.rating === preset) ?? RATING_OPTIONS[0],
-            grade.is_correct,
-          )}」那一档）
-        </p>
-        <div className="mt-3 space-y-2">
-          {RATING_OPTIONS.map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              onClick={() => onRate(option.rating)}
-              className={`ease-soft w-full rounded-md border px-4 py-3 text-left transition-[background-color,border-color] duration-200 active:scale-[0.99] ${
-                option.rating === preset
-                  ? "border-brand-600 bg-brand-50"
-                  : "border-subtle bg-surface hover:border-strong"
-              }`}
-            >
-              <span className="text-primary block text-sm leading-snug">{option.label}</span>
-              <span className="text-tertiary mt-0.5 block text-[11px] leading-snug">
-                {ratingHint(option, grade.is_correct)}
-              </span>
-            </button>
-          ))}
-        </div>
-        <p className="text-tertiary mt-2.5 text-[11px] leading-relaxed">{RATING_FOOTNOTE}</p>
       </div>
     </section>
   );
@@ -1114,15 +1197,10 @@ function FinishedView({
   records: ReviewRecord[];
 }) {
   /*
-    这一屏是**用来读的**：主卡下面全是字，而小词（44px）正好压在左边那列单词上。
-    所以请它退成小点（16px，落在卡片边距里、碰不到字），离开这一屏时再请回来。
-
-    ⚠️ 清理函数不能省：少了它，回首页时它还缩着，看着像"小词变小了"。
+    这里原来单独请小词让开一次（理由：主卡下面全是字，44px 的球正好压在左边那列单词上）。
+    **已挪到 StudyPage 那一层统一管** —— 学习页和结算页都要让开，
+    各设各的会在切换时互相覆盖。见上面 StudyPage 里那段注释。
   */
-  useEffect(() => {
-    requestQuiet(true);
-    return () => requestQuiet(false);
-  }, []);
 
   // 纯函数、同步、几十条数据 —— 不值得上 useMemo，也不会碰网络。
   const attribution = aggregateErrors(records);
@@ -1133,7 +1211,9 @@ function FinishedView({
     .sort((a, b) => b.count - a.count);
 
   return (
-    <div data-animated className="flex flex-col gap-3">
+    // data-stagger：结算页是"读完就走"的屏，让五块依次落位，
+    // 眼睛不用一次性对付一整屏文字。降级模式下 globals.css 会整段关掉。
+    <div data-stagger className="flex flex-col gap-3">
       <header>
         <h1 className="text-primary text-xl leading-snug font-medium">今天这一单走完了</h1>
         <p className="text-secondary mt-1.5 text-sm leading-relaxed">
@@ -1149,8 +1229,13 @@ function FinishedView({
           <span className="text-secondary ml-2 text-sm font-normal">/ {summary.total} 个</span>
         </p>
         <p className="text-secondary mt-3 text-xs">用时约 {formatElapsed(summary.elapsed_ms)}</p>
-        <p className="text-secondary border-strong mt-5 border-t pt-4 text-xs leading-relaxed">
-          一共作答 {summary.attempts} 次（同一个词再练一遍也算一次）—— 这就是为什么它比词的个数多。
+        <p className="text-secondary border-strong/60 mt-5 border-t pt-4 text-xs leading-relaxed">
+          共作答 <span className="text-primary font-mono tabular-nums">{summary.attempts}</span> 次
+          {/* 只在真的重复过时才解释。全对一次过的话，这句解释是在回答一个没人问的问题 ——
+              而这屏上一个字都嫌多。 */}
+          {summary.attempts > summary.total && (
+            <span className="text-tertiary"> — 同一个词再来一遍，也算一次</span>
+          )}
         </p>
       </section>
 
@@ -1159,11 +1244,20 @@ function FinishedView({
         <p className="text-tertiary text-[11px] tracking-[0.08em]">这次错在哪</p>
         {attribution.confidence === "too_few_samples" ? (
           <>
+            {/* ⚠️ total 为 0 和"做得太少"是两件事，得分开说。
+                上面那个"24 / 24"是从 review_logs 里算的（刷新也在），
+                而错因只认**本轮内存里**的作答 —— 刷新一下 or 隔一会儿再进来，
+                records 就是空的。原来两种情况共用一句「这次只做了 0 道」，
+                真机上看到的是"全对了 24 个"和"只做了 0 道"并排摆着，自相矛盾。 */}
             <p className="text-primary mt-3 text-sm leading-relaxed">
-              这次只做了 {attribution.total} 道，还看不出规律。
+              {attribution.total === 0
+                ? "这一块只认这一轮刚作答的记录 —— 刷新过，就看不到它们了。"
+                : `这次只做了 ${attribution.total} 道，还看不出规律。`}
             </p>
             <p className="text-secondary mt-2 text-xs leading-relaxed">
-              样本太少时下结论等于瞎猜 —— 多练几次再来看这一块。
+              {attribution.total === 0
+                ? "上面的成绩是从复习记录里算的，那个不会丢。"
+                : "样本太少时下结论等于瞎猜 —— 多练几次再来看这一块。"}
             </p>
           </>
         ) : attribution.wrong === 0 ? (
@@ -1189,10 +1283,13 @@ function FinishedView({
                 </li>
               ))}
             </ul>
+            {/* 原来写「这是从你这次的 N 次作答里数出来的，不是猜的」——
+                N 上面那句刚说过一遍。留下来的只有"不是猜的"这四个字，
+                那才是这一块想让你相信的事。 */}
             <p className="text-tertiary mt-3 text-[11px] leading-relaxed">
-              这是从你这次的 {attribution.total} 次作答里数出来的，不是猜的。
+              数出来的，不是猜的。
               {attribution.unclassified > 0
-                ? ` 另有 ${attribution.unclassified} 个错没记清原因，没有算进上面。`
+                ? ` 另有 ${attribution.unclassified} 个错没记清原因，没算进上面。`
                 : ""}
             </p>
           </>
@@ -1209,8 +1306,13 @@ function FinishedView({
             <p className="text-secondary mt-3 text-xs leading-relaxed">
               这几个今天错过，明天还会出现在你面前：
             </p>
+            {/* ⚠️ 必须截断。真机验收时全答错，这一块一口气列出了 24 号词，
+                把数据说明和「回首页」顶到了要滑三屏才够得着的地方 ——
+                而这一屏的结尾动作恰恰是"回首页"。
+                列 8 个够看清楚今天是什么状况了；剩下的说明"明天都会再出现"，
+                比再列 16 行有用。 */}
             <ul className="divide-subtle mt-3 divide-y">
-              {summary.stuck.map((w) => (
+              {summary.stuck.slice(0, STUCK_PREVIEW).map((w) => (
                 <li key={w.word_id} className="flex items-baseline justify-between gap-3 py-2.5">
                   <span className="text-primary min-w-0 truncate text-sm">{w.lemma}</span>
                   <span className="text-tertiary shrink-0 text-[11px] tabular-nums">
@@ -1219,24 +1321,38 @@ function FinishedView({
                 </li>
               ))}
             </ul>
+            {summary.stuck.length > STUCK_PREVIEW && (
+              <p className="text-tertiary border-subtle mt-2 border-t pt-2.5 text-[11px]">
+                还有 {summary.stuck.length - STUCK_PREVIEW} 个 —— 明天一样会回来，不用记下来。
+              </p>
+            )}
           </>
         )}
       </section>
 
-      {/* 会怎么练：手写摘要，不由 AI 生成 */}
-      <section className="border-subtle bg-surface rounded-lg border p-5">
-        <p className="text-tertiary text-[11px] tracking-[0.08em]">会怎么练</p>
-        <p className="text-primary mt-3 text-sm leading-relaxed">{session.goalSummary}</p>
-      </section>
+      {/* 「会怎么练」这块原来在这儿，删了。
+          它是**开始之前**该看的东西（首页上有一份一模一样的）；
+          练完再念一遍，等于饭都吃完了才把菜单递过来。
+          结算页该回答的是"我练得怎么样" —— 上面三块已经把这件事说完。 */}
 
-      {/* 诚实标注（方案 §6.3 要求出现在结果页与学习页） */}
-      <section className="border-warning-600/30 bg-warning-50 rounded-lg border p-4">
-        <p className="text-primary text-xs font-medium">必须让你知道的两件事</p>
-        <p className="text-secondary mt-2 text-xs leading-relaxed">{DATA_HONEST_NOTE}</p>
-        <p className="text-secondary mt-2 text-xs leading-relaxed">
-          另外：复习间隔按 FSRS 排 —— 答对的词间隔会拉长，答错的会很快回来。
-          参数是通用默认值，还没按你个人的记忆调过，所以它是「合理」而不是「为你想过」。
-        </p>
+      {/* 诚实标注（方案 §6.3 要求出现在结果页与学习页）。
+          这条是硬约束，但硬约束不等于**必须一直摊开**：150 多字压在最底下，
+          大多数人只会看到一团黄、然后划过去。改成默认收起、想看能点开 ——
+          跟首页「数据说明」用同一套原生 details，全站只教用户一种折叠方式。 */}
+      <section className="border-warning-600/30 bg-warning-50 rounded-lg border px-4 py-3">
+        <details>
+          <summary className="flex cursor-pointer list-none items-baseline justify-between gap-3">
+            <span className="text-primary text-xs font-medium">数据说明</span>
+            <span className="text-tertiary shrink-0 text-[11px] underline underline-offset-4">
+              展开
+            </span>
+          </summary>
+          <p className="text-secondary mt-2.5 text-xs leading-relaxed">{DATA_HONEST_NOTE}</p>
+          <p className="text-secondary mt-2 text-xs leading-relaxed">
+            另外：复习间隔按 FSRS 排 —— 答对的词间隔会拉长，答错的会很快回来。
+            参数是通用默认值，还没按你个人的记忆调过，所以它是「合理」而不是「为你想过」。
+          </p>
+        </details>
       </section>
 
       <button

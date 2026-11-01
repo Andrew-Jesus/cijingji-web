@@ -94,16 +94,34 @@ describe("shouldRequeue / Again 才回插队列", () => {
 });
 
 describe("RATING_FOOTNOTE / 必须说清的边界", () => {
-  it("要写明科学复习调度还没接（否则用户以为自己在给系统调复习计划）", () => {
-    expect(RATING_FOOTNOTE).toContain("阶段 2");
+  /*
+    这组测试 2026-11-01 重写过。原来的三条守着的是**一句假话**：
+
+      it("要写明科学复习调度还没接", () => expect(RATING_FOOTNOTE).toContain("阶段 2"));
+
+    可是 FSRS 在 10-24 就接了，`studyRepo.ts` 每次作答都拿 rating 算新排期。
+    测试一直绿，界面一直在骗人 —— 因为它守的是"这句话有没有被改掉"，
+    而不是"这句话是不是真的"。**断言要对着事实写，不能对着历史文案写。**
+
+    现在的分工：
+      · 第 1 条守**必须说的事**（它确实影响复习安排，这个必须让用户知道）
+      · 第 2 条守**不许再说的假话**（防回潮 —— 这条是新增的，专门防今天这个问题再发生一次）
+      · 第 3 条守**不许越过界**（界面不知道具体隔几天，参数是通用默认值，不许替算法打保票）
+  */
+
+  it("必须说清它影响复习安排（不然用户会以为这是个无关紧要的心情按钮）", () => {
+    expect(RATING_FOOTNOTE).toContain("下次");
+    expect(RATING_FOOTNOTE).toContain("再出现");
   });
 
-  it("要写明它眼下只影响今天（不然用户会误解它的作用范围）", () => {
-    expect(RATING_FOOTNOTE).toContain("今天");
+  it("不许再说「复习调度还没接」——FSRS 已经接了，这句话现在是假的", () => {
+    expect(RATING_FOOTNOTE).not.toContain("还没接");
+    expect(RATING_FOOTNOTE).not.toContain("阶段 2");
   });
 
-  it("不许出现复习间隔相关的承诺（间隔归 FSRS 独占，这里不许越界）", () => {
+  it("不许承诺具体天数（间隔由 FSRS 算，参数还是通用默认值，界面不该打保票）", () => {
+    expect(RATING_FOOTNOTE).not.toMatch(/\d+\s*天/);
     expect(RATING_FOOTNOTE).not.toContain("天后");
-    expect(RATING_FOOTNOTE).not.toContain("间隔");
+    expect(RATING_FOOTNOTE).not.toContain("固定");
   });
 });
