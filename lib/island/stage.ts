@@ -44,7 +44,7 @@ import {
   type PanelSide,
 } from "@/lib/console/dock";
 
-import { CONTENT_SLIDE_PX, islandForm, type IslandFormInput } from "./form";
+import { CONTENT_SLIDE_PX, islandForm, type IslandForm, type IslandFormInput } from "./form";
 
 /** 它现在在哪个家 */
 export type IslandStage = "corner" | "stage";
@@ -54,6 +54,17 @@ export type IslandStage = "corner" | "stage";
  * 值必须与改造前 `ConsoleDock` 里那个 `EDGE_PX` 一致 —— 老用户不该觉得"球挪了"。
  */
 export const CORNER_EDGE_PX = 20;
+
+/**
+ * 收成小点（dot 档）时，贴边留白**更深一截**。
+ *
+ * 为什么跟普通档不一样：dot 直径 16px，沿用 20px 留白时球的右缘 =
+ * 20 + 16 = 36px，而正文卡片文字左缘实测 37px —— 只差 1px，
+ * 桌面端滚动条一挤就压字（2026-10-17 结果页实测挂账，11-01 才修）。
+ * 收深到 26px 后球右缘 = 42px，余 5px 以上，扰动也吃得下。
+ * **只动 dot 档**：44px 的球/岛视觉落点沿用老值 —— 老用户不该觉得"球挪了"。
+ */
+export const CORNER_QUIET_EDGE_PX = 26;
 
 /** 登台后材料离屏幕顶边的距离 */
 export const STAGE_TOP_PX = 16;
@@ -108,7 +119,8 @@ export function materialTopExpr(stage: IslandStage, ratio: number): string {
 /**
  * 定位层的 transform。
  *
- * 角落档贴着用户选的那一边（贴左就左边缘对齐 20px，贴右就右边缘对齐 20px）；
+ * 角落档贴着用户选的那一边（贴左就左边缘对齐留白，贴右就右边缘对齐留白；
+ * 普通档 20px、小点档 26px）；
  * 台上档水平居中 —— `calc(50vw - var(--island-w) / 2)` 里除法的除数是数字，
  * 而 `--island-w` 可能是 `min(100vw - 32px, 420px)` 这种表达式，`calc` 允许嵌 `min()`，
  * 所以满屏横幅那一档也能直接算出来。
@@ -117,13 +129,16 @@ export function stageTransform(input: {
   stage: IslandStage;
   side: "left" | "right";
   ratio: number;
+  /** 当前形态。dot 档在角落里退得更深一截（理由见 `CORNER_QUIET_EDGE_PX`） */
+  form?: IslandForm;
 }): string {
+  const edgePx = input.form === "dot" ? CORNER_QUIET_EDGE_PX : CORNER_EDGE_PX;
   const x =
     input.stage === "stage"
       ? "calc(50vw - var(--island-w) / 2)"
       : input.side === "left"
-        ? `${CORNER_EDGE_PX}px`
-        : `calc(100vw - ${CORNER_EDGE_PX}px - var(--island-w))`;
+        ? `${edgePx}px`
+        : `calc(100vw - ${edgePx}px - var(--island-w))`;
 
   return `translate(${x}, ${materialTopExpr(input.stage, input.ratio)})`;
 }

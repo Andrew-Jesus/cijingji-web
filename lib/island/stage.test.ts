@@ -5,6 +5,7 @@ import { BOTTOM_MARGIN_PX, TOP_LIMIT_PX } from "@/lib/console/dock";
 import { type IslandFormInput } from "./form";
 import {
   CORNER_EDGE_PX,
+  CORNER_QUIET_EDGE_PX,
   PANEL_MAX_VH,
   STAGE_TOP_PX,
   contentSlidePx,
@@ -92,8 +93,13 @@ describe("stageFor —— 这一刻它在哪个家", () => {
 });
 
 describe("几何常量", () => {
-  it("角落留白沿用改造前那个数 —— 老用户不该觉得球挪了", () => {
+  it("普通档（球/岛）角落留白沿用改造前那个数 —— 老用户不该觉得球挪了", () => {
     expect(CORNER_EDGE_PX).toBe(20);
+  });
+
+  it("小点档贴边更深一截：右缘 = 26+16 = 42px，不再贴着正文左缘 37px（10-17 挂账 11-01 修）", () => {
+    expect(CORNER_QUIET_EDGE_PX).toBe(26);
+    expect(CORNER_QUIET_EDGE_PX + 16).toBeGreaterThan(37);
   });
 
   it("台上离顶边一小段，且不会顶到刘海", () => {
@@ -171,6 +177,37 @@ describe("stageTransform —— 定位层的 transform", () => {
     const t = stageTransform({ stage: "corner", side: "right", ratio: 1 });
     expect(t).toContain("100vw");
     expect(t).toContain(`- ${CORNER_EDGE_PX}px - var(--island-w)`);
+  });
+
+  it("角落·小点档：贴边更深一截；其余档不受影响", () => {
+    const dotLeft = stageTransform({
+      stage: "corner",
+      side: "left",
+      ratio: 1,
+      form: "dot",
+    });
+    expect(dotLeft).toContain(`translate(${CORNER_QUIET_EDGE_PX}px,`);
+
+    const dotRight = stageTransform({
+      stage: "corner",
+      side: "right",
+      ratio: 1,
+      form: "dot",
+    });
+    expect(dotRight).toContain(`- ${CORNER_QUIET_EDGE_PX}px - var(--island-w)`);
+
+    // 球档沿用老留白 —— 老用户不该觉得"球挪了"
+    const ballLeft = stageTransform({
+      stage: "corner",
+      side: "left",
+      ratio: 1,
+      form: "ball",
+    });
+    expect(ballLeft).toContain(`translate(${CORNER_EDGE_PX}px,`);
+
+    // 不传 form（老调用方式）也必须是普通档，行为向后兼容
+    const noForm = stageTransform({ stage: "corner", side: "left", ratio: 1 });
+    expect(noForm).toContain(`translate(${CORNER_EDGE_PX}px,`);
   });
 
   it("★ 两种家都用同一套 translate 写法 —— 换家才能平滑过渡", () => {

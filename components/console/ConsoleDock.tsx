@@ -527,7 +527,12 @@ export function ConsoleDock() {
       }
     : {
         ...sizeVars,
-        transform: stageTransform({ stage, side: prefs.spot.side, ratio: prefs.spot.ratio }),
+        transform: stageTransform({
+          stage,
+          side: prefs.spot.side,
+          ratio: prefs.spot.ratio,
+          form,
+        }),
         transition: SLIDE,
       };
 
