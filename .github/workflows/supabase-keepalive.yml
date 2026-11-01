@@ -1,0 +1,50 @@
+# ── Supabase 保活 ─────────────────────────────────────────────────────
+# 为什么有这个文件：Supabase 免费档的项目连续 7 天没有数据库活动会被**自动暂停**，
+# 暂停 = 整个项目下线、域名从 DNS 摘除，登录页报「连不上账号服务器」。
+# 2026-11-01 真的发生过一次，Andy 手动 Restore 才救回来。
+#
+# 做法：每周自动发两次真实查询。REST 查询会被数据库的 RLS 权限拦成空数组
+# （返回 200 + []），但查询本身真实抵达了 Postgres —— 这就是 Supabase 认的
+# 「有活动」。Auth health 顺带戳登录服务，双保险。
+#
+# 安全说明：这里只用 publishable key —— 它设计上就是公开的（本来就编译进
+# 每个访客的浏览器里），拦数据靠的是数据库 RLS。secret key 绝不进这个文件。
+#
+# 为什么一周跑两次而不是一次：GitHub 的定时任务偶尔会延迟甚至整轮跳过，
+# Supabase 的暂停线是 7 天，两次 = 每次间隔 3~4 天，留足冗余。
+#
+# 验收：仓库页 → Actions → 选中最新一次运行 → 两个步骤都是绿勾。
+
+name: supabase-keepalive
+
+on:
+  schedule:
+    # GitHub 的 cron 用 UTC。UTC 00:00 = 北京时间 08:00。
+    - cron: "0 0 * * 1,4"
+  workflow_dispatch: {} # 允许在网页上手动点「Run」，用于验收
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 戳数据库（REST 查询，RLS 拦下数据，活动成立）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          code=$(curl -sS -o /tmp/rest.json -w "%{http_code}" --max-time 30 \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+            "$SUPABASE_URL/rest/v1/profiles?select=id&limit=1")
+          echo "REST -> HTTP $code, body: $(cat /tmp/rest.json)"
+          [ "$code" = "200" ] || exit 1
+
+      - name: 戳登录服务（Auth health）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          code=$(curl -sS -o /tmp/auth.json -w "%{http_code}" --max-time 30 \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+            "$SUPABASE_URL/auth/v1/health")
+          echo "AUTH -> HTTP $code, body: $(cat /tmp/auth.json)"
+          [ "$code" = "200" ] || exit 1
