@@ -150,8 +150,8 @@ export default function ReviewPage() {
                   onClick={() => setDays(w.days)}
                   className={
                     active
-                      ? "bg-brand-600 text-on-brand rounded-md px-3 py-1.5 text-xs transition-colors"
-                      : "text-secondary hover:text-primary border-subtle rounded-md border px-3 py-1.5 text-xs transition-colors"
+                      ? "bg-cta text-on-ink ease-snap rounded-sm px-3 py-1.5 text-xs transition-colors duration-140"
+                      : "text-secondary hover:text-primary border-subtle ease-snap rounded-sm border px-3 py-1.5 text-xs transition-colors duration-140"
                   }
                 >
                   {w.label}

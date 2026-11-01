@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: "词径记",
-    // 状态栏保持系统默认配色 —— 暖白页面配深色字，跟着系统走比自己指定更不容易出错。
+    // 状态栏保持系统默认配色 —— 浅色页面配深色字，跟着系统走比自己指定更不容易出错。
     statusBarStyle: "default",
   },
   applicationName: "词径记",
@@ -37,7 +37,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   // 与 globals.css 的 --color-page 保持一致（themeColor 只能是字面量，无法读 CSS 变量）
-  themeColor: "#f7f5f2",
+  themeColor: "#f6f7f9",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

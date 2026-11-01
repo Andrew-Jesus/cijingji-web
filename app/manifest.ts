@@ -45,8 +45,8 @@ export default function manifest(): MetadataRoute.Manifest {
     display: "standalone",
     orientation: "portrait",
     // 与 globals.css 的 --color-page 一致（这两处只能写字面量，读不到 CSS 变量）
-    background_color: "#f7f5f2",
-    theme_color: "#f7f5f2",
+    background_color: "#f6f7f9",
+    theme_color: "#f6f7f9",
     icons: [
       // 普通版 —— 桌面浏览器 / iOS / 旧安卓
       { src: "/icon.png", sizes: "512x512", type: "image/png", purpose: "any" },

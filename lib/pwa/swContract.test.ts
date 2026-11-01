@@ -192,14 +192,14 @@ describe("离线兜底页的颜色 ↔ 设计令牌（全项目唯一一处硬�
    * 于是整组断言一起变成摆设。所以先单独验一次 `token()` 本身是活的。
    */
   it("核对项有效性：token() 取得到已知值，且取不到不存在的名字", () => {
-    expect(token("--color-page")).toBe("#f7f5f2");
+    expect(token("--color-page")).toBe("#f6f7f9");
     expect(token("--no-such-token")).toBeUndefined();
   });
 
   it.each([
-    ["#f7f5f2", "--color-page"],
-    ["#3a3733", "--color-primary"],
-    ["#7a736b", "--color-secondary"],
+    ["#f6f7f9", "--color-page"],
+    ["#16181d", "--color-primary"],
+    ["#5f6675", "--color-secondary"],
     ["#2b2a27", "--color-ink"],
     ["#39372f", "--island-ink-lit"],
     ["#1b1a18", "--island-ink-deep"],

@@ -856,7 +856,7 @@ function CardView({
               type="button"
               disabled={text.trim().length === 0}
               onClick={onSubmit}
-              className="bg-brand-600 text-on-brand ease-soft w-full rounded-md px-4 py-3 text-sm font-medium transition-opacity duration-200 active:scale-[0.99] disabled:opacity-40"
+              className="bg-cta text-on-ink ease-snap w-full rounded-md border border-transparent px-4 py-3 text-sm font-medium transition-[background-color,border-color,color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985] disabled:border-subtle disabled:bg-surface disabled:text-tertiary"
             >
               确认
             </button>
@@ -902,7 +902,7 @@ function CardView({
           type="button"
           disabled={selected === null}
           onClick={onSubmit}
-          className="bg-brand-600 text-on-brand ease-soft mt-4 w-full rounded-md px-4 py-3 text-sm font-medium transition-opacity duration-200 active:scale-[0.99] disabled:opacity-40"
+          className="bg-cta text-on-ink ease-snap mt-4 w-full rounded-md border border-transparent px-4 py-3 text-sm font-medium transition-[background-color,border-color,color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985] disabled:border-subtle disabled:bg-surface disabled:text-tertiary"
         >
           确认
         </button>
@@ -1242,7 +1242,7 @@ function FinishedView({
       <button
         type="button"
         onClick={() => router.push("/")}
-        className="bg-brand-600 text-on-brand ease-soft w-full rounded-md px-4 py-3.5 text-sm transition-opacity duration-200 active:scale-[0.99]"
+        className="bg-cta text-on-ink ease-snap w-full rounded-md px-4 py-3.5 text-sm transition-[background-color,transform] duration-140 hover:bg-cta-hover active:scale-[0.985]"
       >
         回首页
       </button>
