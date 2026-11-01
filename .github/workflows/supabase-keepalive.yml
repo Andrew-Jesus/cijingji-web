@@ -7,8 +7,14 @@
 # （返回 200 + []），但查询本身真实抵达了 Postgres —— 这就是 Supabase 认的
 # 「有活动」。Auth health 顺带戳登录服务，双保险。
 #
-# 安全说明：这里只用 publishable key —— 它设计上就是公开的（本来就编译进
-# 每个访客的浏览器里），拦数据靠的是数据库 RLS。secret key 绝不进这个文件。
+# 安全说明：
+# - SUPABASE_URL 直接写死在这里 —— 项目域名设计上就是公开的（编译进每个
+#   访客的浏览器、天天出现在地址栏），写死还能少一个「人工粘贴出错」的环节
+#   （2026-11-01 首跑就栽在 secret 里的 URL 带了杂质，curl 报 malformed）。
+# - publishable key 走 GitHub secret —— 它虽然也设计为公开，但保持走
+#   secret 的习惯，避免未来误把真 secret 填成公开值。secret key 绝不进这个文件。
+# - 日志里只打印值的**长度**（数字），不打印值本身。正确对照：
+#   URL 长度 = 40，KEY 长度 = 46。对不上号 = 值有杂质。
 #
 # 为什么一周跑两次而不是一次：GitHub 的定时任务偶尔会延迟甚至整轮跳过，
 # Supabase 的暂停线是 7 天，两次 = 每次间隔 3~4 天，留足冗余。
@@ -16,6 +22,9 @@
 # 验收：仓库页 → Actions → 选中最新一次运行 → 两个步骤都是绿勾。
 
 name: supabase-keepalive
+
+env:
+  SUPABASE_URL: https://fkkhamygslgqaxqsjyvc.supabase.co
 
 on:
   schedule:
@@ -29,9 +38,9 @@ jobs:
     steps:
       - name: 戳数据库（REST 查询，RLS 拦下数据，活动成立）
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
+          echo "长度对照：URL=${#SUPABASE_URL}（应 40），KEY=${#SUPABASE_PUBLISHABLE_KEY}（应 46）"
           code=$(curl -sS -o /tmp/rest.json -w "%{http_code}" --max-time 30 \
             -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
             "$SUPABASE_URL/rest/v1/profiles?select=id&limit=1")
@@ -40,7 +49,6 @@ jobs:
 
       - name: 戳登录服务（Auth health）
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
           code=$(curl -sS -o /tmp/auth.json -w "%{http_code}" --max-time 30 \
