@@ -65,6 +65,7 @@ import {
 import { findGoal, interestLabel, isGoalSupported } from "@/lib/onboarding/questions";
 import { countDoneInPlan } from "@/lib/plan/todayProgress";
 import { assembleTodayPlan } from "@/lib/plan/todayPlan";
+import { isConquered, milestonesByWord } from "@/lib/study/milestone";
 import {
   BUDGET_TIER_MINUTES,
   CUSTOM_MINUTE_MAX,
@@ -99,6 +100,8 @@ interface HomeData {
   /** 当前选中的单元 id（抽屉据此标出"现在就是它"） */
   currentUnitId: string;
   firstWords: { word_id: string; lemma: string; meaning_zh: string | null }[];
+  /** 全库已征服的词数（口径：lib/study/milestone.ts 的 isConquered）。征途卡上显示的就是它 */
+  conquered: number;
   goalLabel: string;
   goalSupported: boolean;
   dailyMinutes: number;
@@ -272,6 +275,13 @@ export default function HomePage() {
         // （lib/plan/todayProgress），所以不会出现"两个地方说的数字不一样"。
         const doneToday = countDoneInPlan(reviewLogs, planWordIds, now);
 
+        // 全库已征服（征途卡）。判级在 lib/study/milestone.ts 一处 ——
+        // 首页的数字与 /journey 页的数字永远同源，不会各说各话。
+        let conquered = 0;
+        for (const m of milestonesByWord(reviewLogs).values()) {
+          if (isConquered(m)) conquered++;
+        }
+
         if (cancelled) return;
         // 排好了就往小词报一声 —— 用户不会盯着加载过程，但翻小词时能看见。
         // 只在"换单元 / 换天"时播：改时长也会重跑这个 effect，不加判断会连着刷屏。
@@ -311,6 +321,7 @@ export default function HomePage() {
               lemma: i.lemma,
               meaning_zh: i.meaning_zh,
             })),
+            conquered,
             goalLabel: goalOption?.label ?? profile.goal,
             goalSupported: isGoalSupported(profile.goal),
             dailyMinutes: profile.daily_minutes,
@@ -588,9 +599,19 @@ export default function HomePage() {
             </ul>
           </section>
 
-          {/* ③ 另外两条路。并排两块，而不是两条整行卡片 ——
-              整行卡片每个要吃掉 80px 高度，换来的信息只有八个字。 */}
-          <div className="grid grid-cols-2 gap-2.5">
+          {/* ③ 三条路。并排三块，而不是三条整行卡片 ——
+              整行卡片每个要吃掉 80px 高度，换来的信息只有八个字。
+              征途是游戏化的入口（/journey）：总账数字直接摆在卡上，
+              「已征服 N」比"去看地图"更像一个事实，而不是一个邀请。 */}
+          <div className="grid grid-cols-3 gap-2.5">
+            <button
+              type="button"
+              onClick={() => router.push("/journey")}
+              className="border-subtle bg-surface hover:border-strong ease-snap flex flex-col items-start gap-1.5 rounded-lg border px-4 py-3.5 text-left transition-colors duration-140"
+            >
+              <span className="text-primary text-[13px]">征途</span>
+              <span className="text-tertiary text-[11px] tabular-nums">已征服 {state.data.conquered} 词</span>
+            </button>
             <button
               type="button"
               onClick={() => router.push("/review")}
