@@ -117,11 +117,13 @@ export function UnitPicker({ subtitle, groups, currentId, onPick, onClose }: Uni
 
         {groups.map((group) => (
           <div key={group.id}>
-            {/* 册次小标题。`sticky top-0` 让它在往下滚时贴住抽屉顶部 ——
-                18 行的情况下，滚到第九行还能知道自己在哪本书里。
-                底色必须是 surface（与抽屉同色）并补一段纵向内边距，
-                否则滚动的文字会从它上下两边的缝里透出来。 */}
-            <p className="bg-surface text-tertiary sticky top-0 z-10 mt-4 py-2 text-[11px] tracking-[0.08em]">
+            {/* 册次小标题。曾经做过 `sticky top-0`（贴顶提示"你在哪册"），11-07 撤销：
+                每行的 label 本来就带「八上 / 八下」前缀，组头贴顶的导航增益是零；
+                而 sticky 头本质是一块白布 —— 滚动的行从它底下穿过时总有一截字
+                悬在布下缘，看着就是"一个容器遮住了字"（Andy 11-06 报的怪，
+                修过两条缝——margin 缝、容器 padding 缝——都只是减轻不是根除）。
+                没有机制就没有 bug：让它跟着内容滚走，遮挡就不存在了。 */}
+            <p className="text-tertiary mt-4 py-2 text-[11px] tracking-[0.08em]">
               {group.title}
             </p>
             <ul className="space-y-1">
