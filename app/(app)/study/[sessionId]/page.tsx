@@ -79,6 +79,15 @@ import {
   ratingHint,
 } from "@/lib/study/rating";
 import {
+  buildJourneySegments,
+  reorderForJourney,
+  segmentByWord,
+  segmentProgressAt,
+  transitionNoteFor,
+  type JourneySegment,
+  type SegmentKind,
+} from "@/lib/study/segments";
+import {
   advance,
   buildQueue,
   formatElapsed,
@@ -140,6 +149,14 @@ interface SessionData {
    * （先做 5 个、再进来做 3 个，不一定是 8 个 —— 可能是同一批词又做了一遍）。
    */
   doneWordIdsAtEntry: string[];
+  /**
+   * 今日路线的非空段（热身 → 攻坚 → 新词，规格书 §20.3.1 的「变化」）。
+   * **只装非空段** —— 界面不为"今天没有攻坚"画一个空格子。
+   * 只有一个段时路线行整个省略（一段的路不是路，跟右侧 3/24 是同一个数）。
+   */
+  segments: JourneySegment[];
+  /** word_id → 段。卡片上没有 weight，查"当前这张卡属于哪一段"靠这份表 */
+  segmentById: ReadonlyMap<string, SegmentKind>;
 }
 
 type Phase = "loading" | "error" | "studying" | "finished";
@@ -317,7 +334,12 @@ export default function StudyPage() {
           await setPlanStatus(today, "in_progress");
         }
 
-        const cards = buildStudyCards({ items, snapshot });
+        // 呈现顺序重排：热身 → 攻坚 → 新词。**存储仍是排课原样**（上面的 saveDailyPlan
+        // 已经存完）—— 排课顺序（到期优先、逾期多的先还）是记忆科学的决定，
+        // 这里只换"上课的课表"。纯函数 + 稳定排序：同一天每次装载重排结果一致，
+        // 练到一半退出再进来不会换单子。
+        const journeyItems = reorderForJourney(items);
+        const cards = buildStudyCards({ items: journeyItems, snapshot });
         const knownLemmas = buildKnownLemmaSet(snapshot);
         const settled = settledWordIds(logs, today);
         const initialQueue = buildQueue(cards, settled);
@@ -344,6 +366,8 @@ export default function StudyPage() {
           planTotal: items.length,
           planWordIds,
           doneWordIdsAtEntry: doneWordsAtEntry,
+          segments: buildJourneySegments(journeyItems),
+          segmentById: segmentByWord(journeyItems),
         });
 
         // 进来就先把小词的环对上（与首页同一个口径，同一个函数）
@@ -769,31 +793,62 @@ export default function StudyPage() {
   const progress = progressAt(queue, pos, session.cards.length);
   const alreadyDone = queue.length === 0 && pos === 0;
 
+  // 当前卡的段 + 段切换的一行文案。
+  // pos-1 就是刚答完的那张（advance 只把 pos+1，回插发生在队列中段），
+  // 所以"上一张的段 ≠ 这一张的段"就是真实的行进切换 —— 不需要额外的 ref 记状态。
+  // 文案按**段**写（transitionNoteFor）：回插会让攻坚卡出现在新词卡后面，
+  // 按"从哪切来"写的文案在这种时刻会说假话。
+  const currentKind = card ? (session.segmentById.get(card.word_id) ?? null) : null;
+  const prevKind =
+    pos > 0 ? (session.segmentById.get(queue[pos - 1]?.card.word_id ?? "") ?? null) : null;
+  const transitionNote =
+    card && pos > 0 && currentKind && prevKind !== currentKind
+      ? transitionNoteFor(currentKind)
+      : null;
+
   return (
     <Shell>
       {/* 顶部：退出 + 进度。行内只放"还剩多少"，不写大标题 —— 学习时注意力该在卡上 */}
-      <header className="mb-5 flex items-center gap-4">
-        <button
-          type="button"
-          onClick={() => router.push("/")}
-          className="text-tertiary hover:text-secondary ease-snap -ml-2 shrink-0 px-2 py-1 text-[11px] transition-colors duration-140"
-        >
-          先到这儿
-        </button>
-        {/* 进度线跟首页同一规格（h-1 + 实色 strong）：
-            两边都是"今天走多少了"，长得不一样会让人以为是两件事。 */}
-        <div className="min-w-0 flex-1">
-          <div className="bg-strong/70 h-1 overflow-hidden rounded-full">
-            <div
-              className="bg-brand-600 ease-soft h-full rounded-full transition-[width] duration-240"
-              style={{ width: `${progress.total > 0 ? (progress.done / progress.total) * 100 : 0}%` }}
-            />
+      <header className="mb-5 flex flex-col gap-2.5">
+        <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="text-tertiary hover:text-secondary ease-snap -ml-2 shrink-0 px-2 py-1 text-[11px] transition-colors duration-140"
+          >
+            先到这儿
+          </button>
+          {/* 进度线跟首页同一规格（h-1 + 实色 strong）：
+              两边都是"今天走多少了"，长得不一样会让人以为是两件事。 */}
+          <div className="min-w-0 flex-1">
+            <div className="bg-strong/70 h-1 overflow-hidden rounded-full">
+              <div
+                className="bg-brand-600 ease-soft h-full rounded-full transition-[width] duration-240"
+                style={{ width: `${progress.total > 0 ? (progress.done / progress.total) * 100 : 0}%` }}
+              />
+            </div>
           </div>
+          <p className="text-tertiary shrink-0 text-[11px] tabular-nums">
+            {progress.done}
+            <span className="text-tertiary/60"> / {progress.total}</span>
+          </p>
         </div>
-        <p className="text-tertiary shrink-0 text-[11px] tabular-nums">
-          {progress.done}
-          <span className="text-tertiary/60"> / {progress.total}</span>
-        </p>
+        {session.segments.length > 1 && (
+          /* 今日路线：热身 → 攻坚 → 新词，走到哪段哪段亮。进度口径与右侧同一个机制
+             （segmentProgressAt 与 progressAt 同构：pending 按词去重，回插不虚动）。
+             当前段只加重不换色 —— 一行小字不抢卡，亮着就够了。 */
+          <div className="text-tertiary/60 flex justify-center gap-2.5 text-[11px] tabular-nums">
+            {session.segments.map((seg) => {
+              const sp = segmentProgressAt(queue, pos, seg);
+              const active = currentKind === seg.kind;
+              return (
+                <span key={seg.kind} className={active ? "text-secondary font-medium" : undefined}>
+                  {seg.label} {sp.done}/{sp.total}
+                </span>
+              );
+            })}
+          </div>
+        )}
       </header>
 
       {alreadyDone && !card && (
@@ -815,6 +870,13 @@ export default function StudyPage() {
           data-animated
           className="flex flex-1 flex-col justify-center gap-3"
         >
+          {transitionNote && (
+            /* 段切换的一行字。放在卡的 key 容器里 = 跟这张卡同一进场动画，
+               只在切换后的第一张卡上出现，答完随卡过去 —— 不常驻，才有"进入"的仪式感 */
+            <p className="text-primary text-center text-[11px] tracking-[0.04em]">
+              {transitionNote}
+            </p>
+          )}
           <CardView
             card={card}
             round={current?.round ?? 0}
