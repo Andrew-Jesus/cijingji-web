@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { latestOutcomeByWord, settledWordIds, weakWordIds, type OutcomeLog } from "./history";
+import {
+  latestOutcomeByWord,
+  returningFriends,
+  settledWordIds,
+  weakWordIds,
+  type OutcomeLog,
+} from "./history";
 
 const TODAY = "2026-09-19";
 const YESTERDAY = "2026-09-18";
@@ -109,5 +115,98 @@ describe("settled 与 weak 是对同一件事的两面", () => {
     expect(settled.has("w:weak")).toBe(false);
     expect(settled.has("w:untouched")).toBe(false);
     expect(weak.has("w:untouched")).toBe(false);
+  });
+});
+
+describe("returningFriends / 老熟人回来", () => {
+  /** 任意日期的记录（month 用 1~12 的自然月）。2026-09-19 = 本文件的 TODAY */
+  function logOn(wordId: string, month: number, day: number, hour: number, isCorrect: boolean): OutcomeLog {
+    return { word_id: wordId, is_correct: isCorrect, created_at: new Date(2026, month - 1, day, hour).toISOString() };
+  }
+  /** 收工时刻：9 月 19 日下午 —— now 决定"今天"的日界 */
+  const FINISH = new Date(2026, 8, 19, 15, 0, 0);
+
+  it("规格书原例：错 2 次、隔 11 天、今天对 → 算老熟人", () => {
+    const rows = [
+      logOn("w:suppose", 9, 8, 10, false),
+      logOn("w:suppose", 9, 8, 11, false),
+      logOn("w:suppose", 9, 19, 9, true),
+    ];
+    expect(returningFriends(rows, FINISH)).toEqual([
+      { word_id: "w:suppose", wrongs_before: 2, gap_days: 11 },
+    ]);
+  });
+
+  it("恰好 3 天 → 算（与记忆台阶「熬过一次遗忘」同一个门槛）", () => {
+    const rows = [logOn("w:a", 9, 16, 10, false), logOn("w:a", 9, 19, 9, true)];
+    expect(returningFriends(rows, FINISH)).toHaveLength(1);
+  });
+
+  it("昨天错的今天对 → 不算（才隔一天，谈不上回来）", () => {
+    const rows = [log("w:a", YESTERDAY, 10, false), log("w:a", TODAY, 9, true)];
+    expect(returningFriends(rows, FINISH)).toEqual([]);
+  });
+
+  it("今天先错后对 → 算翻盘；旧账只数今天以前的错", () => {
+    const rows = [
+      logOn("w:a", 9, 8, 10, false),
+      logOn("w:a", 9, 8, 11, false),
+      log("w:a", TODAY, 8, false),
+      log("w:a", TODAY, 9, true),
+    ];
+    expect(returningFriends(rows, FINISH)).toEqual([
+      { word_id: "w:a", wrongs_before: 2, gap_days: 11 },
+    ]);
+  });
+
+  it("今天先对后错 → 不算（最后一次是错的，说「今天对了」是假话）", () => {
+    const rows = [
+      logOn("w:a", 9, 8, 10, false),
+      log("w:a", TODAY, 9, true),
+      log("w:a", TODAY, 10, false),
+    ];
+    expect(returningFriends(rows, FINISH)).toEqual([]);
+  });
+
+  it("以前只对过、没错过 → 不算（没打败过你的不算老熟人）", () => {
+    const rows = [logOn("w:a", 9, 8, 10, true), log("w:a", TODAY, 9, true)];
+    expect(returningFriends(rows, FINISH)).toEqual([]);
+  });
+
+  it("以前错过但今天没作答 → 不算", () => {
+    expect(returningFriends([logOn("w:a", 9, 8, 10, false)], FINISH)).toEqual([]);
+  });
+
+  it("排序：隔得久的在前；并列比错次；再并列按 word_id", () => {
+    const rows = [
+      // w:b 隔 4 天错 1 次
+      logOn("w:b", 9, 15, 10, false),
+      log("w:b", TODAY, 9, true),
+      // w:a 隔 4 天错 2 次（并列时错次多的在前）
+      logOn("w:a", 9, 15, 9, false),
+      logOn("w:a", 9, 15, 11, false),
+      log("w:a", TODAY, 9, true),
+      // w:c 隔 30 天错 1 次（最久，最前）
+      logOn("w:c", 8, 20, 10, false),
+      log("w:c", TODAY, 9, true),
+    ];
+    expect(returningFriends(rows, FINISH).map((f) => f.word_id)).toEqual(["w:c", "w:a", "w:b"]);
+  });
+
+  it("坏时间戳整条跳过，不把词的历史清零", () => {
+    const rows: OutcomeLog[] = [
+      { word_id: "w:a", is_correct: false, created_at: "not-a-date" },
+      logOn("w:a", 9, 8, 10, false),
+      log("w:a", TODAY, 9, true),
+    ];
+    expect(returningFriends(rows, FINISH)).toEqual([
+      { word_id: "w:a", wrongs_before: 1, gap_days: 11 },
+    ]);
+  });
+
+  it("minGapDays 可以调高 —— 默认之外不另造第二套默认值", () => {
+    const rows = [logOn("w:a", 9, 16, 10, false), log("w:a", TODAY, 9, true)];
+    expect(returningFriends(rows, FINISH, 7)).toEqual([]);
+    expect(returningFriends(rows, FINISH, 3)).toHaveLength(1);
   });
 });

@@ -65,6 +65,7 @@ import {
 import { findGoal, interestLabel, isGoalSupported } from "@/lib/onboarding/questions";
 import { countDoneInPlan } from "@/lib/plan/todayProgress";
 import { assembleTodayPlan } from "@/lib/plan/todayPlan";
+import { aggregateErrors, withinLocalDays } from "@/lib/study/attribution";
 import { isConquered, milestonesByWord } from "@/lib/study/milestone";
 import {
   BUDGET_TIER_MINUTES,
@@ -102,6 +103,12 @@ interface HomeData {
   firstWords: { word_id: string; lemma: string; meaning_zh: string | null }[];
   /** 全库已征服的词数（口径：lib/study/milestone.ts 的 isConquered）。征途卡上显示的就是它 */
   conquered: number;
+  /**
+   * 难词数 —— 近 30 天错了不止一次的词（attribution.ts 的 `stubborn` 口径）。
+   * **必须与「回头看」页 30 天窗口的"反复错的词"同一本账**：
+   * 首页写 N 个、点进去看到的就是那 N 个，两处各算各的会当场互相拆台。
+   */
+  hardWords: number;
   goalLabel: string;
   goalSupported: boolean;
   dailyMinutes: number;
@@ -282,6 +289,10 @@ export default function HomePage() {
           if (isConquered(m)) conquered++;
         }
 
+        // 难词数（对手数字）。近 30 天错 ≥2 次的词 —— 与「回头看」页的
+        // 30 天窗口同一个函数、同一份流水算出来，落地数字分毫不差。
+        const hardWords = aggregateErrors(withinLocalDays(reviewLogs, 30, now)).stubborn.length;
+
         if (cancelled) return;
         // 排好了就往小词报一声 —— 用户不会盯着加载过程，但翻小词时能看见。
         // 只在"换单元 / 换天"时播：改时长也会重跑这个 effect，不加判断会连着刷屏。
@@ -322,6 +333,7 @@ export default function HomePage() {
               meaning_zh: i.meaning_zh,
             })),
             conquered,
+            hardWords,
             goalLabel: goalOption?.label ?? profile.goal,
             goalSupported: isGoalSupported(profile.goal),
             dailyMinutes: profile.daily_minutes,
@@ -617,8 +629,13 @@ export default function HomePage() {
               onClick={() => router.push("/review")}
               className="border-subtle bg-surface hover:border-strong ease-snap flex flex-col items-start gap-1.5 rounded-lg border px-4 py-3.5 text-left transition-colors duration-140"
             >
-              <span className="text-primary text-[13px]">错题</span>
-              <span className="text-tertiary text-[11px]">按错因归类</span>
+              {/* 难词 = 近 30 天错 ≥2 次的词，与「回头看」页 30 天窗口同一本账。
+                  它是游戏化三个数字里的"对手"—— 摆在首页常驻，才有想打赢它的日子。
+                  点进去是整间屋（错因归类、慢词、犹豫都在），门牌只挂最重要的一块。 */}
+              <span className="text-primary text-[13px] tabular-nums">难词 {state.data.hardWords} 个</span>
+              <span className="text-tertiary text-[11px]">
+                {state.data.hardWords > 0 ? "近 30 天错了不止一次" : "近 30 天没有反复错的"}
+              </span>
             </button>
             <button
               type="button"

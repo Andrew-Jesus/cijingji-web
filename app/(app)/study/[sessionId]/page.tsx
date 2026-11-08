@@ -52,6 +52,7 @@ import {
   findCachedExample,
   loadDailyPlan,
   loadMemoryMap,
+  loadReviewLogs,
   loadReviewLogsForDay,
   recordAiUsage,
   recordAnswer,
@@ -68,6 +69,7 @@ import { aggregateErrors, REMEDY } from "@/lib/study/attribution";
 import { buildKnownLemmaSet, buildStudyCards } from "@/lib/study/cards";
 import { examplePacingDelayMs } from "@/lib/study/examplePacing";
 import { errorTypeLabel, gradeAnswer } from "@/lib/study/grade";
+import { returningFriends, type ReturningFriend } from "@/lib/study/history";
 import { MNEMONIC_TRIGGER_LABEL, mnemonicFor } from "@/lib/study/mnemonic";
 import {
   RATING_FOOTNOTE,
@@ -162,6 +164,33 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** 结算页「老熟人回来」那一行的样子。lemma 已解好 —— 界面不该再碰内部 id */
+interface ReturningView {
+  lemma: string;
+  wrongs: number;
+  gap_days: number;
+}
+
+/**
+ * 从判级结果里挑出能上屏的那一个。
+ *
+ * 结算页只讲**一个**故事（规格书 §20.3.1 的「一行事实」），取排序最前的；
+ * 讲不出名字的跳过 —— 判级只认流水，可能含完形里答对的词，它们不在今天的
+ * 卡片里、没有 lemma 可讲，让位给下一个有名字的。一个都讲不了 = 返回 null，
+ * 那一节整个不渲染（不硬凑情绪）。
+ */
+function resolveReturning(
+  friends: readonly ReturningFriend[],
+  cards: readonly StudyCard[],
+): ReturningView | null {
+  const lemmaOf = new Map(cards.map((c) => [c.word_id, c.lemma]));
+  for (const friend of friends) {
+    const lemma = lemmaOf.get(friend.word_id);
+    if (lemma) return { lemma, wrongs: friend.wrongs_before, gap_days: friend.gap_days };
+  }
+  return null;
+}
+
 export default function StudyPage() {
   const router = useRouter();
   const params = useParams<{ sessionId: string }>();
@@ -175,6 +204,8 @@ export default function StudyPage() {
   const [pos, setPos] = useState(0);
   const [records, setRecords] = useState<ReviewRecord[]>([]);
   const [summary, setSummary] = useState<StudySummary | null>(null);
+  /** 「老熟人回来」那一行。null = 今天没有够格的故事，那一节不渲染 */
+  const [returning, setReturning] = useState<ReturningView | null>(null);
 
   // ---- 当前这张卡的作答状态 ----
   const [selected, setSelected] = useState<number | null>(null);
@@ -327,6 +358,16 @@ export default function StudyPage() {
             .sort((a, b) => a - b);
           const elapsed = stamps.length >= 2 ? stamps[stamps.length - 1] - stamps[0] : 0;
           setSummary(summarize(logs, cards, elapsed));
+          // 老熟人要**全史**流水（今天之前错过没有、隔了几天），而装载用的 `logs`
+          // 只有今天这一份 —— 单独读一次全量。读失败就当没有：这一行是情绪，不是账目。
+          try {
+            const allLogs = await loadReviewLogs();
+            if (!cancelled) {
+              setReturning(resolveReturning(returningFriends(allLogs, now), cards));
+            }
+          } catch {
+            if (!cancelled) setReturning(null);
+          }
           setPhase("finished");
           return;
         }
@@ -637,6 +678,15 @@ export default function StudyPage() {
     if (moved.finished) {
       const s = summarize(nextRecords, session.cards, nowMs() - sessionStartAt.current);
       setSummary(s);
+      // 老熟人必须在收工时刻从**落库后**的全史流水里算 —— 装载时刻那份
+      // 只有今天、且不含本场作答，"刚答对的词"根本不在里面。
+      // 读失败就当没有：这一行是情绪，不是账目，不能为它打断结算。
+      try {
+        const allLogs = await loadReviewLogs();
+        setReturning(resolveReturning(returningFriends(allLogs, new Date()), session.cards));
+      } catch {
+        setReturning(null);
+      }
       try {
         await setPlanStatus(session.sessionId, "done");
       } catch {
@@ -703,7 +753,13 @@ export default function StudyPage() {
   if (phase === "finished" && summary) {
     return (
       <Shell>
-        <FinishedView summary={summary} session={session} router={router} records={records} />
+        <FinishedView
+          summary={summary}
+          session={session}
+          router={router}
+          records={records}
+          returning={returning}
+        />
       </Shell>
     );
   }
@@ -1189,12 +1245,15 @@ function FinishedView({
   session,
   router,
   records,
+  returning,
 }: {
   summary: StudySummary;
   session: SessionData;
   router: ReturnType<typeof useRouter>;
   /** 本轮每一条作答。归因只认原始记录，不认"已经算好的摘要" —— 摘要里没有错因 */
   records: ReviewRecord[];
+  /** 「老熟人回来」的事实（lemma 已解好）。null = 今天没有够格的故事，整节不渲染 */
+  returning: ReturningView | null;
 }) {
   /*
     这里原来单独请小词让开一次（理由：主卡下面全是字，44px 的球正好压在左边那列单词上）。
@@ -1238,6 +1297,21 @@ function FinishedView({
           )}
         </p>
       </section>
+
+      {/* 老熟人回来：规格书 §20.3.1 的「一行事实」—— 它以前打败过你，现在你赢了。
+          数据来源是**全史流水**（收工时刻落库后重读的），不是本轮 records：
+          所以刷新之后它还在 —— 与主卡的成绩同一个来源；「这次错在哪」只认本轮，
+          那是另一回事，两块的口径各说各的、都不撒谎。
+          没有够格的词就不渲染 —— 这一行的力量全在"真发生了"，硬凑一次就再也不可信。 */}
+      {returning && (
+        <section className="border-subtle bg-surface rounded-lg border p-5">
+          <p className="text-tertiary text-[11px] tracking-[0.08em]">老熟人回来</p>
+          <p className="text-primary mt-3 text-sm leading-relaxed">
+            <span className="font-medium">{returning.lemma}</span>{" "}
+            上次错了 {returning.wrongs} 次，隔了 {returning.gap_days} 天，今天对了。
+          </p>
+        </section>
+      )}
 
       {/* 这次错在哪：从本轮作答里**数**出来的（纯函数），不调 AI、不猜 */}
       <section className="border-subtle bg-surface rounded-lg border p-5">

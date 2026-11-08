@@ -58,7 +58,10 @@ type State = { status: "loading" } | { status: "error"; message: string } | { st
 
 export default function ReviewPage() {
   const router = useRouter();
-  const [days, setDays] = useState<WindowDays>(7);
+  // 默认 30 天：首页「难词 N 个」摆的就是 30 天这份账 —— 从那边点进来，
+  // 落地看到的"这 N 个词错了不止一次"必须是同一个 N，两处各说各话会当场拆台。
+  // 想看更近的，7 天档就在旁边，一键切。
+  const [days, setDays] = useState<WindowDays>(30);
   const [state, setState] = useState<State>({ status: "loading" });
 
   useEffect(() => {

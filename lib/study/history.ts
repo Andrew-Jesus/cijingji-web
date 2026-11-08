@@ -81,3 +81,89 @@ export function weakWordIds(logs: readonly OutcomeLog[], limit: number): string[
     .slice(0, Math.max(limit, 0))
     .map(([wordId]) => wordId);
 }
+
+/** 「老熟人」——结算页那一行的全部事实。 lemma 由调用方解（本函数只认流水，不查词库） */
+export interface ReturningFriend {
+  word_id: string;
+  /** 今天之前，这个词一共错过几次 */
+  wrongs_before: number;
+  /** 距上次见到它，隔了几个自然日（按本地日界数） */
+  gap_days: number;
+}
+
+/** 老熟人的见面门槛。与记忆台阶「熬过一次遗忘」的 ≥3 天同一个数 —— 全站只许有一套间隔词汇 */
+export const RETURNING_MIN_GAP_DAYS = 3;
+
+/**
+ * 「老熟人回来」——今天答对、但它以前打败过你、而且你们有日子没见的词。
+ *
+ * ── 判据（全部是流水上数得出来的事实）────────────────────────
+ *   · **今天最后一次作答是对的**（沿用 `latestOutcomeByWord` 的口径：
+ *     "最后一次是对的"才算今天赢了 —— 今天先对后错的说"今天对了"是假话）；
+ *   · 今天之前错过 ≥1 次 —— "它以前打败过你"；
+ *     今天的错不折抵进来：今天先错后对是翻盘，不是旧账；
+ *   · 距上次见到它 ≥ `minGapDays` 个自然日。昨天错的今天对，才隔一天，谈不上"回来"。
+ *
+ * 排序 = 故事强度：隔得最久的在前，并列比错次，再并列按 word_id 兜底
+ * —— 同一份输入两次调用得到同一个顺序（与 `weakWordIds` 同一纪律）。
+ * 坏时间戳的记录整条跳过（与 `latestOutcomeByWord` 同一规则）。
+ */
+export function returningFriends(
+  logs: readonly OutcomeLog[],
+  now: Date,
+  minGapDays: number = RETURNING_MIN_GAP_DAYS,
+): ReturningFriend[] {
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+  const minGap = Math.max(minGapDays, 1);
+
+  interface Trail {
+    /** 今天之前的累计错次 */
+    wrongsBefore: number;
+    /** 今天之前最后一次作答的时刻；没见过 = -Infinity */
+    lastSeenBefore: number;
+    /** 今天最后一次作答的结果；今天还没见过 = null */
+    lastTodayCorrect: boolean | null;
+  }
+
+  const trails = new Map<string, Trail>();
+  for (const log of logs) {
+    const at = new Date(log.created_at).getTime();
+    if (Number.isNaN(at)) continue;
+
+    let trail = trails.get(log.word_id);
+    if (!trail) {
+      trail = { wrongsBefore: 0, lastSeenBefore: Number.NEGATIVE_INFINITY, lastTodayCorrect: null };
+      trails.set(log.word_id, trail);
+    }
+
+    if (at >= todayStart.getTime()) {
+      trail.lastTodayCorrect = log.is_correct;
+      continue;
+    }
+    if (!log.is_correct) trail.wrongsBefore += 1;
+    if (at > trail.lastSeenBefore) trail.lastSeenBefore = at;
+  }
+
+  const DAY_MS = 86400000;
+  const friends: ReturningFriend[] = [];
+  for (const [wordId, trail] of trails) {
+    if (trail.lastTodayCorrect !== true) continue;
+    if (trail.wrongsBefore < 1) continue;
+    if (!Number.isFinite(trail.lastSeenBefore)) continue;
+
+    const seenStart = new Date(trail.lastSeenBefore);
+    seenStart.setHours(0, 0, 0, 0);
+    const gapDays = Math.round((todayStart.getTime() - seenStart.getTime()) / DAY_MS);
+    if (gapDays < minGap) continue;
+
+    friends.push({ word_id: wordId, wrongs_before: trail.wrongsBefore, gap_days: gapDays });
+  }
+
+  return friends.sort(
+    (a, b) =>
+      b.gap_days - a.gap_days ||
+      b.wrongs_before - a.wrongs_before ||
+      a.word_id.localeCompare(b.word_id),
+  );
+}
